@@ -37,8 +37,14 @@ else()
     set(FREERTOS_SOURCES "")  # No FreeRTOS sources if FreeRTOS is disabled
 endif()
 
+# Board profile: sets resolution, colour depth and DPI to match the target
+# hardware. Must come before add_subdirectory(lvgl) so that the LVGL sources
+# are built with the same LV_COLOR_DEPTH / LV_DPI_DEF as the application.
+include(${PROJECT_SOURCE_DIR}/boards/boards.cmake)
+
 # Main include files of the project
 include_directories(${PROJECT_SOURCE_DIR}/main/inc)
+include_directories(${PROJECT_SOURCE_DIR}/src)
 
 # Define options for LVGL with default values (OFF)
 option(LV_USE_DRAW_SDL "Use SDL draw unit" OFF)
@@ -67,9 +73,58 @@ add_compile_definitions($<$<BOOL:${LV_USE_FFMPEG}>:LV_USE_FFMPEG=1>)
 
 # Add LVGL subdirectory
 add_subdirectory(lvgl)
-target_include_directories(lvgl PUBLIC ${PROJECT_SOURCE_DIR} ${SDL2_INCLUDE_DIRS})
+# BUILD_INTERFACE: these are only valid while building this tree. LVGL declares
+# install rules for the `lvgl` target, and CMake rejects exported include
+# directories that live inside the consuming project's source dir.
+# Quoted: SDL2_INCLUDE_DIRS is a ;-list, which would otherwise be split across
+# argument boundaries and tear the generator expression in half.
+target_include_directories(lvgl PUBLIC
+    "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>"
+    "$<BUILD_INTERFACE:${SDL2_INCLUDE_DIRS}>")
 
-set(MAIN_SOURCES src/mouse_cursor_icon.c src/hal/hal.c)
+# UI sources. Globbed so that adding a page (or splitting one across several
+# files) needs no CMake edit; CONFIGURE_DEPENDS re-runs the glob when the set
+# of files on disk changes.
+file(GLOB_RECURSE UI_SOURCES CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/ui/*.c")
+
+# Smart home device model, configuration and state, the device's own
+# settings, threads, the HTTP client, the saved radio stations and the stream
+# player: plain C, no LVGL.
+file(GLOB_RECURSE DEVICE_SOURCES CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/src/devices/*.c"
+    "${PROJECT_SOURCE_DIR}/src/settings/*.c"
+    "${PROJECT_SOURCE_DIR}/src/os/*.c"
+    "${PROJECT_SOURCE_DIR}/src/net/*.c"
+    "${PROJECT_SOURCE_DIR}/src/radio/*.c"
+    "${PROJECT_SOURCE_DIR}/src/audio/*.c")
+if(MSVC)
+    # Portable C that also builds with ESP-IDF's GCC; MSVC's _s replacements
+    # do not exist there.
+    set_source_files_properties(${DEVICE_SOURCES} PROPERTIES COMPILE_DEFINITIONS _CRT_SECURE_NO_WARNINGS)
+endif()
+
+# cJSON, the same parser ESP-IDF ships as its `json` component, so the device
+# configuration code builds unchanged on both. Included as "cJSON.h".
+include_directories(${PROJECT_SOURCE_DIR}/third_party/cjson)
+
+# stb_image, which reads radio station favicons with malloc() rather than
+# LVGL's allocator, so it can run off the LVGL thread. Included as "stb_image.h".
+include_directories(${PROJECT_SOURCE_DIR}/third_party/stb)
+
+# The radio player's decoders, portable C that builds the same with ESP-IDF:
+# minimp3 (header only) and the Helix AAC decoder. Helix is vendored code with
+# its own style; its warnings are not ours to fix.
+include_directories(${PROJECT_SOURCE_DIR}/third_party/minimp3 ${PROJECT_SOURCE_DIR}/third_party/helix-aac)
+file(GLOB HELIX_AAC_SOURCES CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/third_party/helix-aac/*.c")
+set_source_files_properties(${HELIX_AAC_SOURCES} PROPERTIES COMPILE_DEFINITIONS USE_DEFAULT_STDLIB)
+if(MSVC)
+    set_source_files_properties(${HELIX_AAC_SOURCES} PROPERTIES COMPILE_OPTIONS /w)
+else()
+    set_source_files_properties(${HELIX_AAC_SOURCES} PROPERTIES COMPILE_OPTIONS -w)
+endif()
+
+set(MAIN_SOURCES src/mouse_cursor_icon.c src/hal/hal.c ${UI_SOURCES} ${DEVICE_SOURCES}
+    third_party/cjson/cJSON.c ${HELIX_AAC_SOURCES})
 set(MAIN_LIBS lvgl lvgl::examples lvgl::demos lvgl::thorvg ${SDL2_LIBRARIES})
 
 # Create the main executable, depending on the FreeRTOS option
@@ -83,6 +138,11 @@ endif()
 
 if(NOT MSVC)
     list(APPEND MAIN_LIBS m pthread)
+endif()
+
+# The simulator's HTTP client (src/net/http_client.c).
+if(WIN32)
+    list(APPEND MAIN_LIBS winhttp)
 endif()
 
 # Custom target to run the executable

@@ -1,0 +1,149 @@
+{
+  "devices": [
+    {
+      "name": "Bedside lamp", "type": "light", "room": "Bedroom",
+      "state": "zigbee2mqtt/bedside_lamp", "command": "zigbee2mqtt/bedside_lamp/set",
+      "channels": {
+        "power":      { "key": "state" },
+        "brightness": { "key": "brightness", "max": 254 },
+        "color_temp": { "key": "color_temp" },
+        "color":      { "key": "color", "format": "rgb" }
+      }
+    },
+    {
+      "name": "Ceiling", "type": "light", "room": "Bedroom",
+      "channels": {
+        "power": { "state": "esphome/bedroom/light/ceiling/state",
+                   "command": "esphome/bedroom/light/ceiling/command" }
+      }
+    },
+    {
+      "name": "Thermostat", "type": "thermostat", "room": "Bedroom",
+      "state": "zigbee2mqtt/bedroom_trv", "command": "zigbee2mqtt/bedroom_trv/set",
+      "channels": {
+        "target_temperature": { "key": "current_heating_setpoint", "min": 5, "max": 30, "step": 0.5 },
+        "temperature":        { "key": "local_temperature" },
+        "mode":               { "key": "system_mode", "options": ["heat", "auto", "off"] }
+      }
+    },
+    {
+      "name": "Curtains", "type": "curtain", "room": "Bedroom",
+      "state": "zigbee2mqtt/bedroom_curtains", "command": "zigbee2mqtt/bedroom_curtains/set",
+      "channels": {
+        "position": { "key": "position" },
+        "cover":    { "key": "state" }
+      }
+    },
+    {
+      "name": "Dehumidifier", "type": "dehumidifier", "room": "Bedroom",
+      "channels": {
+        "power":           { "state": "stat/dehumidifier/POWER", "command": "cmnd/dehumidifier/POWER" },
+        "target_humidity": { "state": "stat/dehumidifier/TARGET", "command": "cmnd/dehumidifier/TARGET" },
+        "humidity":        { "state": "tele/dehumidifier/SENSOR", "key": "AM2301.Humidity" }
+      }
+    },
+    {
+      "name": "Bedroom climate", "type": "sensor", "room": "Bedroom",
+      "state": "zigbee2mqtt/bedroom_sensor",
+      "channels": {
+        "temperature": { "key": "temperature" },
+        "humidity":    { "key": "humidity" }
+      }
+    },
+    {
+      "name": "TV", "type": "plug", "room": "Living room",
+      "channels": {
+        "power": { "state": "shellies/tv-plug/relay/0", "command": "shellies/tv-plug/relay/0/command",
+                   "on": "on", "off": "off" }
+      }
+    },
+    {
+      "name": "LED strip", "type": "light", "room": "Living room",
+      "state": "esphome/led_strip/state", "command": "esphome/led_strip/command",
+      "channels": {
+        "power":      { "key": "state" },
+        "brightness": { "key": "brightness", "max": 255 },
+        "color":      { "key": "color", "format": "rgb" }
+      }
+    },
+    {
+      "name": "TV backlight", "type": "wled", "room": "Living room",
+      "channels": {
+        "power":      { "state": "wled/tv/g", "command": "wled/tv" },
+        "brightness": { "state": "wled/tv/g", "command": "wled/tv", "max": 255 },
+        "color":      { "state": "wled/tv/c", "command": "wled/tv/col" },
+        "effect":     { "state": "wled/tv/v", "tag": "fx", "command": "wled/tv/api", "template": "FX={}",
+                        "options": ["Solid", "Breathe", "Colorloop", "Rainbow",
+                                    "Aurora", "Fire 2012", "Colorwaves", "Pacifica"],
+                        "values":  [0, 2, 8, 9, 38, 66, 67, 101] }
+      }
+    },
+    {
+      "name": "Air purifier", "type": "air_purifier", "room": "Living room",
+      "state": "zigbee2mqtt/air_purifier", "command": "zigbee2mqtt/air_purifier/set",
+      "channels": {
+        "power": { "key": "fan_state" },
+        "mode":  { "key": "fan_mode", "options": ["auto", "low", "medium", "high"] }
+      }
+    },
+    {
+      "name": "Ceiling fan", "type": "fan", "room": "Living room",
+      "state": "home/living_room/fan", "command": "home/living_room/fan/set",
+      "channels": {
+        "power": { "key": "state" },
+        "speed": { "key": "speed", "options": ["low", "medium", "high"] }
+      }
+    },
+    {
+      "name": "Kettle", "type": "switch", "room": "Kitchen",
+      "channels": {
+        "power": { "state": "stat/kettle/POWER", "command": "cmnd/kettle/POWER" }
+      }
+    },
+    {
+      "name": "Kitchen air", "type": "sensor", "room": "Kitchen",
+      "state": "zigbee2mqtt/kitchen_air",
+      "channels": {
+        "co2":         { "key": "co2" },
+        "temperature": { "key": "temperature" }
+      }
+    },
+    {
+      "name": "Humidifier", "type": "humidifier", "room": "Kitchen",
+      "channels": {
+        "power": { "state": "stat/humidifier/POWER", "command": "cmnd/humidifier/POWER" }
+      }
+    },
+    {
+      "name": "Front door", "type": "lock", "room": "Hallway",
+      "state": "zigbee2mqtt/front_door_lock", "command": "zigbee2mqtt/front_door_lock/set",
+      "channels": {
+        "lock": { "key": "state" }
+      }
+    },
+    {
+      "name": "Door sensor", "type": "contact", "room": "Hallway",
+      "channels": {
+        "contact": { "state": "zigbee2mqtt/front_door_contact", "key": "contact", "on": false, "off": true }
+      }
+    },
+    {
+      "name": "Hall motion", "type": "motion", "room": "Hallway",
+      "channels": {
+        "motion": { "state": "zigbee2mqtt/hall_motion", "key": "occupancy", "on": true, "off": false }
+      }
+    },
+    {
+      "name": "Bathroom heater", "type": "heater", "room": "Hallway",
+      "channels": {
+        "power": { "state": "shellies/heater/relay/0", "command": "shellies/heater/relay/0/command",
+                   "on": "on", "off": "off" }
+      }
+    }
+  ],
+  "scenes": [
+    { "name": "Morning",    "topic": "home/scene/set", "payload": "morning" },
+    { "name": "Movie",      "topic": "home/scene/set", "payload": "movie" },
+    { "name": "Good night", "topic": "home/scene/set", "payload": { "scene": "good_night", "transition": 30 } }
+  ]
+}

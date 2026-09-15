@@ -25,6 +25,71 @@ Clone the PC project and the related sub modules:
 git clone --recursive https://github.com/lvgl/lv_port_pc_vscode
 ```
 
+## Target board
+
+This simulator is configured to stand in for the **Waveshare
+[ESP32-P4-WIFI6-Touch-LCD-7B](https://www.waveshare.com/wiki/ESP32-P4-WIFI6-Touch-LCD-7B)**:
+a 7" 1024x600 IPS panel (EK79007 over 2-lane MIPI-DSI) with GT911 5-point
+capacitive touch, driven by an ESP32-P4 with an ESP32-C6 for Wi-Fi 6 / BLE.
+
+The board profile drives the simulator window resolution, the LVGL colour
+depth and the DPI used to scale default widget sizes and paddings, so a layout
+that looks right here looks right on the device:
+
+| Property | Value |
+| --- | --- |
+| Resolution | 1024 x 600, landscape |
+| Colour depth | 16 bpp (RGB565), matching the BSP default |
+| DPI | 170 (`sqrt(1024^2 + 600^2) / 7.0"`) |
+
+### Selecting a board
+
+```bash
+cmake -B build -DBOARD=ESP32_P4_WIFI6_TOUCH_LCD_7B   # default
+cmake -B build -DBOARD=ESP32_P4_NANO_7INCH           # ESP32-P4-NANO + 7" DSI LCD
+```
+
+The profiles live in [`boards/boards.cmake`](boards/boards.cmake); add a board
+by copying one of the `elseif()` blocks and listing its id in `BOARD_PROFILES`.
+For a one-off panel, use the `CUSTOM` profile instead of editing the file:
+
+```bash
+cmake -B build -DBOARD=CUSTOM \
+  -DBOARD_CUSTOM_NAME=MyPanel \
+  -DBOARD_CUSTOM_HOR_RES=800 -DBOARD_CUSTOM_VER_RES=480 \
+  -DBOARD_CUSTOM_COLOR_DEPTH=16 -DBOARD_CUSTOM_DPI=200
+```
+
+CMake prints the active profile when it configures, and the running simulator
+logs it and shows it in the window title.
+
+### Fitting the window on your desktop
+
+1024x600 is larger than some laptop screens once window decorations are added.
+`BOARD_SIM_ZOOM` scales the window without touching the framebuffer, so the
+rendered layout is unchanged:
+
+```bash
+cmake -B build -DBOARD_SIM_ZOOM=0.75
+```
+
+### Using the profile from your own code
+
+The selected profile is available to C through `src/board/board.h` as
+`BOARD_NAME`, `BOARD_HOR_RES`, `BOARD_VER_RES`, `BOARD_COLOR_DEPTH`,
+`BOARD_DPI` and `BOARD_WINDOW_TITLE`. Prefer these over hard-coded pixel
+values so screens follow the board profile:
+
+```c
+#include "board/board.h"
+
+sdl_hal_init(BOARD_HOR_RES, BOARD_VER_RES);
+```
+
+`lv_conf.h` keeps `LV_COLOR_DEPTH` and `LV_DPI_DEF` as `#ifndef`-guarded
+fallbacks matching the default board; the board profile overrides both at
+configure time, so change the profile rather than those two lines.
+
 ## Usage
 
 ### Visual Studio Code
@@ -89,6 +154,867 @@ cd build
 cmake ..
 make -j
 ```
+
+## User interface
+
+The UI lives under `src/ui/`, one directory per page so a page can grow into
+several files without moving anything:
+
+```
+src/ui/
+  ui.h / ui.c                 shell: navigation rail, page registry, ui_navigate()
+  ui_page.h                   the contract every page implements
+  ui_theme.h / ui_theme.c     colour, type and spacing tokens + widget factories
+  ui_weather_icon.h / .c      weather condition icons drawn from plain objects
+  ui_format.h / .c            every time and date on screen, as the settings ask
+  ui_picker.h / .c            iOS-style wheel picker (effects, date, time)
+  pages/
+    clock/page_clock.*        ambient clock face + time, date, conditions
+                              and MinuteCast precipitation graph, colour-coded
+                              calendar events, air summary
+    alarms/page_alarms.*      alarm list and editor, iOS-style
+    weather/page_weather.*    current conditions, next 24 hours in 4-hour
+                              steps, 7-day forecast with low/high range bars
+    air_quality/page_air_quality.*
+                              metric tiles, history chart with 1h/24h/7d,
+                              analysis, forecast strip
+    radio/page_radio.*        now playing, transport, volume, saved stations
+                              with edit mode (add dialog in radio_search.c)
+    smart_home/page_smart_home.*
+                              Devices page: square device tiles, room filter,
+                              scenes (tiles in smart_home_tile.c, controls
+                              panel in smart_home_modal.c)
+    settings/page_settings.*  Settings page: Wi-Fi, MQTT, Date & time and
+                              Device tabs (one file per tab, settings_*.c)
+  ui_devices_feed.h / .c      devices page <-> device hub; simulated broker
+  ui_radio_feed.h / .c        radio page <-> Radio Browser, the SD card and
+                              the stream player
+  ui_settings_feed.h / .c     loads, stores and applies settings; simulated
+                              Wi-Fi radio and broker connection
+src/devices/                  device model, JSON configuration, MQTT state hub
+                              (plain C, no LVGL)
+src/settings/                 device settings model, JSON load/save, and
+                              clock_time: local time, zones, DST (plain C)
+src/os/                       mutex, condition variable, thread, sleep:
+                              Win32 or POSIX (plain C, no LVGL)
+src/net/                      HTTP streams (WinHTTP / esp_http_client), GET,
+                              and the background download worker
+src/radio/                    Radio Browser station records, SD card layout,
+                              favicon conversion (plain C, no LVGL)
+src/audio/                    radio_player: stream, decoder and output; and
+                              audio_sink: SDL2 in the simulator, the ES8311
+                              codec on the board (plain C, no LVGL)
+data/devices.json             example device configuration, read by the simulator
+third_party/cjson/            cJSON 1.7.18 (MIT), same parser ESP-IDF ships
+third_party/stb/              stb_image 2.30 (public domain), reads favicons
+third_party/minimp3/          minimp3 (CC0), MP3 decoder
+third_party/helix-aac/        Helix AAC and HE-AAC decoder (RPSL); SOURCE.md
+                              lists the changes made to it
+```
+
+CMake globs `src/ui/**/*.c` with `CONFIGURE_DEPENDS`, so adding a file needs no
+build edit.
+
+### The page contract
+
+Every page returns a `ui_page_t` (see `ui_page.h`) and is otherwise opaque:
+
+```c
+typedef struct {
+    const char * title;                      /* nav rail label  */
+    const char * icon;                       /* LV_SYMBOL_*     */
+    lv_obj_t * (*create)(lv_obj_t * parent); /* build the tree  */
+    void (*on_show)(void);                   /* start polling   */
+    void (*on_hide)(void);                   /* stop polling    */
+} ui_page_t;
+```
+
+All pages are built once during `ui_init()` and then shown or hidden, so
+navigation is instant. Anything periodic belongs in `on_show`/`on_hide` so
+background pages cost nothing.
+
+To add a page: create `src/ui/pages/<name>/`, fill in a `ui_page_t`, add an id
+to `ui_page_id_t` and its descriptor to the table at the top of `ui_init()`.
+
+### The clock page's two states
+
+The home page is what the panel shows when nobody is using it, so it has an
+AMBIENT state -- just the time, the date and the next alarm, centred on an
+otherwise empty screen with the navigation rail faded out -- and an ACTIVE
+state that slides the clock up to the top-left and fades the rest in.
+
+The shell drops back to ambient after `UI_IDLE_TIMEOUT_MS` (`ui.c`, currently
+4 minutes) of no input, measured with `lv_display_get_inactive_time()` so it
+covers every page. A press anywhere on the clock page wakes it again. Drive it
+by hand with `page_clock_set_ambient()`.
+
+Two details worth knowing if you change that layout:
+
+- The rail keeps its slot in the layout and is only faded, so nothing reflows
+  when it comes and goes. The ambient clock is therefore centred on the
+  *display* rather than on the page, to compensate for the rail's width.
+- The clock block is a free-positioned sibling of the grid, not a cell in it.
+  An invisible `clock_anchor` cell reserves its active slot, and the block
+  animates between that position and the ambient centre.
+
+### The clock feed
+
+`ui_clock_feed` is the one place that reads the wall clock, and the only piece
+here that is really application logic rather than UI. It runs a one-second
+timer and:
+
+- pushes the time every second and the date on each minute boundary;
+- recomputes which alarm rings next on each minute boundary, and immediately
+  whenever the alarms page reports an edit.
+
+The next alarm is whichever enabled alarm has the fewest minutes until it
+fires, walking a week ahead for repeating ones. `when` comes out as "Today",
+"Tomorrow", or "on <weekday>".
+
+Two details that are easy to get wrong: `tm_wday` counts from Sunday while
+`page_alarm_days_t` counts from Monday, so the index is rotated at both ends of
+the calculation; and `localtime()` returns a shared buffer with a different
+reentrant spelling per toolchain, so `local_now()` wraps `localtime_s` and
+`localtime_r`.
+
+This is the seam a real application layer replaces, once there is NTP, storage
+and something that actually sounds the alarm.
+
+### Dividers and the precipitation band
+
+The page is split into four regions by hairlines rather than by boxes: one
+full-height line down the middle separating clock/calendar from weather/air,
+and one across each side. They all fade to nothing at both ends
+(`divider_create()` in `page_clock.c`), which is why none of them reads as the
+edge of a card, and why the two horizontal ones stop short of the vertical one
+instead of crossing it.
+
+That needs three gradient stops -- transparent, colour, transparent -- so
+`LV_GRADIENT_MAX_STOPS` is raised to 3 in `lv_conf.h`. Two descriptors exist,
+one per axis, because a gradient's direction is part of the descriptor.
+
+The weather column leads with the current conditions -- temperature with the
+icon, then RealFeel and humidity as a pair of readouts -- and follows with the
+MinuteCast forecast: a headline ("Rain starts in 24 min") over an area chart of
+`PAGE_CLOCK_RAIN_MINUTES` (120) minutes, drawn against a Light/Heavy scale.
+
+Intensity sets the curve's height and nothing else: the chart is drawn in a
+single blue (`UI_COLOR_RAIN`), because height already carries the intensity and
+the Light/Heavy scale labels it. Dry minutes rest on the axis at zero.
+
+Under the plot is a ruler with a tick every quarter hour -- longest on the
+hour, medium on the half hour, shortest on the quarters -- and the chart's own
+division lines rise from each of those ticks, kept faint so they never compete
+with the data. `RAIN_CHART_HEADROOM` adds padding above the plot so a
+full-scale reading is not sliced off by the top edge.
+
+The two sides of the page split their height differently, so each gets its own
+grid rather than sharing rows: the left is three tenths time and date to seven
+tenths events, the right three fifths forecast to two fifths indoor sensors.
+
+```c
+page_clock_set_rain(levels, count, "Rain starting in 24 min");
+```
+
+The plot is a plain `lv_chart` with nothing hooked onto it: the widget owns the
+data, the scaling, the grid and the drawing. Entries past `count` are treated
+as dry, so a short forecast just flattens the tail.
+
+Note that `lv_chart`'s LINE type draws only the line and optional point
+markers -- it has no area fill, so the curve is not shaded.
+
+`lv_chart` renders no X axis of its own; the convention is to stack a
+horizontal `lv_scale` beneath it with a matching tick count, which is what the
+page does. Nothing on this page draws itself any more.
+
+`lv_scale` offers exactly two tick lengths, major and minor, so a tick is major
+every second one: the half hours stand taller than the quarters, and the hours
+are singled out by being the only ticks that carry a label. The label array
+passes empty strings for the half hours.
+
+Two alignment details, both easy to trip over:
+
+- The scale sits in its own row behind a spacer the width of the Light/Heavy
+  gutter, mirroring the chart's row, so the two line up structurally rather
+  than by matching padding values.
+- Both rows are inset on the right by `RAIN_LABEL_MARGIN`. `lv_scale` centres
+  a label on its tick, so the last one would otherwise overhang the end of the
+  axis and be clipped. Insetting both equally keeps them aligned.
+
+### Alarms
+
+`page_alarms` holds the list and the editor in one page, swapping between them
+in the same cell. An alarm carries a label, a time, the days it repeats on, an
+enable flag, snooze and a tone; the editor sets all of them with time wheels,
+a row of day toggles, a dropdown of tones and an on-screen keyboard for the
+label.
+
+`PAGE_ALARMS_MAX` (32) is deliberately invisible. Nothing announces it -- on
+reaching the limit the add button simply goes disabled and greys out, the way
+iOS stops you rather than explaining itself. Both `add_clicked()` and
+`save_clicked()` re-check it, so the cap holds even if the button state is ever
+missed.
+
+The list is kept sorted by time of day, earliest first, so it reorders itself
+when an alarm's time is edited. The array index is how a card identifies its
+alarm and never appears on screen; anything holding one has to be finished with
+it before the next sort.
+
+The page owns the alarms while the device has nowhere to persist them. When
+you add storage, load with `page_alarms_set_alarms()` and save from the
+callback registered with `page_alarms_set_changed_cb()`, which fires on every
+add, edit, delete and toggle.
+
+Working out *which* alarm rings next needs a clock and a calendar, and the page
+has neither. `ui_clock_feed` does it -- see below -- and pushes the answer to
+the clock page with `page_clock_set_next_alarm()`.
+
+Tapping the chip on the clock page opens the alarms page, but only once the
+page is awake: while ambient the chip is part of the idle face, so touching it
+wakes the page like touching anywhere else rather than navigating.
+
+### Weather
+
+`page_weather` stacks three cards, top to bottom:
+
+- **Now** -- a large drawn icon and the temperature, the condition with
+  today's high and low, the location and when the forecast was fetched, then
+  feels-like, humidity, chance of rain, wind, sunrise and sunset.
+- **Next 24 hours** -- `PAGE_WEATHER_HOURS` (6) slots, one every four hours,
+  each with its time, icon, temperature and chance of rain.
+- **Next 7 days** -- `PAGE_WEATHER_DAYS` (7) columns, today first and on a
+  tile, each with an icon, chance of rain, and the high over the low joined by
+  a vertical range bar.
+
+The range bars share one scale -- the week's coldest low at the bottom of
+every track, its warmest high at the top -- so the warm and cool days read at a
+glance. They are `lv_bar`s in `LV_BAR_MODE_RANGE`. `lv_bar` paints an
+indicator gradient across the whole track and clips it to the indicator, so
+the cool-to-warm colour stands for the same temperature in every column.
+Moving both ends of a range bar has an ordering trap: each end is clamped
+against the other, so `page_weather_set_daily()` opens the bar fully before
+placing the low and high.
+
+A chance of rain of `RAIN_NOTABLE_PERCENT` (30 %) or more is drawn in the rain
+blue; anything below stays dim, so the wet slots stand out.
+
+The service feeds it with plain data and never touches LVGL:
+
+```c
+page_weather_set_location("Athens", "Updated 10:15 AM");
+page_weather_set_now(&now);
+page_weather_set_hourly(hours, PAGE_WEATHER_HOURS);
+page_weather_set_daily(days, PAGE_WEATHER_DAYS);
+```
+
+Temperatures are whole degrees in whatever unit the service works in; the page
+only appends the degree sign. Passing fewer entries than there are slots hides
+the rest.
+
+Tapping the weather section of the clock page opens this page, awake only,
+the same way the air quality section opens its page.
+
+#### Weather icons
+
+The built-in fonts have no weather glyphs, so `ui_weather_icon` draws them from
+rounded objects -- discs and pills for the sun, moon, clouds, rain streaks,
+snowflakes and fog bands, plus the symbol font's bolt for thunderstorms. The
+shapes are laid out on a 100x100 grid and scaled, so one set of numbers serves
+the 96 px headline icon and the 40 px daily ones.
+
+```c
+lv_obj_t * icon = ui_weather_icon_create(parent, 48, UI_WEATHER_SHOWERS);
+ui_weather_icon_set(icon, UI_WEATHER_CLEAR_NIGHT);
+```
+
+Night variants are separate conditions, because the service knows sunrise and
+sunset and the icon does not. The moon's crescent is a second disc painted in
+the colour of the nearest opaque ancestor, so give a surface its background
+*before* creating an icon on it. The bolt is a glyph rather than an `lv_line`:
+with `LV_USE_FLOAT` on, percentage line points are stored as floats and lose
+their encoding, so a zigzag could not scale with the icon.
+
+Replace the icons with a weather icon font or images whenever you add one;
+callers only ever deal in `ui_weather_t`.
+
+#### Navigation rail icons
+
+The rail reads Home, Alarms, Weather, AQI, Radio and Devices. The built-in
+symbol font has no cloud, sun, wind, radio or bulb, so the rail draws its
+icons with `UI_FONT_ICON` (`src/ui/fonts/ui_font_icons_28.c`): a tiny font cut
+from [Font Awesome](https://fontawesome.com) Free 6.7.2 Solid (icons CC BY
+4.0, font SIL OFL 1.1) holding only the glyphs the symbol font lacks --
+cloud-with-sun for Weather (`UI_SYMBOL_WEATHER`), wind for AQI
+(`UI_SYMBOL_AIR`), a classic radio for Radio (`UI_SYMBOL_RADIO`) and a light
+bulb for Devices (`UI_SYMBOL_DEVICES`). LVGL's bundled FontAwesome copy is an
+old 5.x, and no Free 5.x font has the radio, which is why the source is fetched
+from npm instead. It falls back to Montserrat 28 for everything else, so the
+other pages' `LV_SYMBOL_*` icons render through it unchanged. The
+`lv_font_conv` command to regenerate it, with more code points, is in
+`ui_theme.h`.
+
+### Radio
+
+The Radio page plays stations from [Radio Browser](https://www.radio-browser.info),
+a free, community-run station directory with an open API. Every saved station
+is one of its records, kept by the record's `stationuuid`.
+
+The list shows each station's favicon, its name, and a line of country,
+language and genre -- "United Kingdom • English • Alternative" -- with no
+captions. Tapping a station plays it; previous and next step through the list.
+**+** opens a dialog that searches the directory by name, tag or country
+(`/json/stations/search`, most played first, broken stations hidden), with the
+results' favicons; **+** on a result saves it, and a tick marks stations
+already saved. **Edit** slides a remove button and a drag handle onto every
+station, a row at a time; **Done** folds them away again.
+Removing the station that is playing stops it and clears the selection.
+
+#### On the SD card
+
+```
+/radio/stations.json          {"stations": ["<uuid>", ...]}, in list order
+/radio/<uuid>/station.json    the directory's record: name, stream URL, favicon
+                              URL, country, language, tags, codec, bitrate, HLS
+/radio/<uuid>/favicon.bin     the favicon as a 96 x 96 ARGB8888 LVGL image
+```
+
+A favicon is converted once, when it is downloaded, so drawing the list never
+decodes a PNG or JPEG. stb_image reads PNG, JPEG, BMP, GIF and ICO; a station
+whose favicon is missing, unreachable, or in another format (SVG, WebP) shows
+the default music icon. On the very first start there is no `stations.json`,
+so eight stations are saved by UUID and their records and favicons fetched in
+the background; that list is at the top of `ui_radio_feed.c`.
+
+In the simulator the card is `data/sdcard/`, which is git-ignored. Delete it to
+start again from the eight.
+
+#### Downloads off the LVGL thread
+
+`src/net/http_worker.c` runs downloads on two background threads and hands the
+results back through `http_worker_poll()`, which the radio feed calls from an
+LVGL timer. Decoding and writing a favicon happen on the worker as well, which
+is why they use `malloc()` and stb_image rather than LVGL's allocator and image
+decoders: LVGL's heap is not thread-safe. Requests go through `http_stream.c`:
+WinHTTP in the simulator, and `esp_http_client` with the certificate bundle on
+the clock -- written, but not yet run there.
+
+#### Playback
+
+Stations play for real, with the same code in the simulator and on the clock:
+`src/audio/radio_player.c`. Playing a station starts two background threads, a
+reader that pulls the stream into a quarter-megabyte buffer and a decoder that
+plays from it. Sound starts once a second or so is buffered, and a stream that
+runs dry pauses to fill up again rather than stuttering. Changing station
+abandons the old threads without waiting on a slow server; they finish and
+free themselves.
+
+| Stream | Played with |
+|---|---|
+| Icecast or Shoutcast MP3 | minimp3 (`third_party/minimp3`, CC0) |
+| Icecast or Shoutcast AAC and HE-AAC | Helix AAC (`third_party/helix-aac`, RealNetworks Public Source License) |
+| Track titles | the ICY metadata those servers send, shown under the station name |
+| HLS | the playlist, or a master playlist's first variant; MPEG-TS or packed-audio segments |
+
+Encrypted HLS and fragmented-MP4 segments are not played; the page says so. A
+stream that fails or drops is retried three times. Helix does not check a frame
+against its input, so the player hands it whole ADTS frames only, and a guard in
+the vendored `bitstream.c` stops a damaged frame reading past its buffer.
+
+Only the audio output differs between the two builds (`src/audio/audio_sink.h`):
+
+- `audio_sink_sdl.c`: the simulator, through SDL2's queued audio.
+- `audio_sink_esp.c`: the board's ES8311 codec and NS4150B amplifier, through
+  Waveshare's BSP component `waveshare/esp32_p4_wifi6_touch_lcd_7b` (which
+  brings `esp_codec_dev`), with stereo mixed down for the one speaker. Written,
+  but not yet run on the board.
+
+Threads come from `src/os/os_port.c` (Win32 in the simulator, POSIX threads on
+ESP-IDF), and the connection from `http_stream.c`. As the directory asks of its
+clients, starting a station also tells it about the play (`/json/url/<uuid>`).
+
+Names render only in the characters the built-in Montserrat fonts carry, which
+are ASCII: a station named in Greek or another script shows gaps until a font
+with those glyphs is added.
+
+### Devices
+
+The Devices page shows one square tile per device: its name along the top
+and its state in the middle. Glyph devices show an icon that is grey when off
+and coloured when on: a yellow bulb, a green plug, a blue droplet, an orange
+flame. A light glows in whatever it was set to last, a colour or a colour
+temperature: the hub stamps each change, and `device_light_color()` picks the
+newer of the two and maps colour temperature onto the same cool-to-warm ramp
+as its slider. An LED strip shows a wand with sparkles, in the same colour.
+Curtains are drawn, with panels that close as the position drops. Sensors and
+thermostats show their readings instead of an icon.
+
+A short line under the icon carries what the colour cannot: brightness, the
+effect and brightness of an LED strip, position, speed or mode. Humidifiers
+and dehumidifiers show their readings without opening the panel: the icon, the
+room's humidity and the target stack down the tile, spread evenly, with a gap
+under the name. They have no detail line, so the three have room.
+
+What a tap does depends on what the device can do:
+
+| Device | Tap |
+| --- | --- |
+| Plug, switch, heater; light, fan, purifier or (de)humidifier with only power | Toggles power |
+| Light or LED strip with brightness, colour temperature, colour or effect | Opens its panel |
+| Fan, purifier, (de)humidifier with speed, mode or target humidity | Opens its panel |
+| Curtain, lock | Opens its panel |
+| Thermostat | `-` / `+` on the tile step the setpoint; the tile opens a panel if there is a mode or power channel |
+| Sensor, door/window contact, motion | Nothing |
+
+The grid scrolls from anywhere, including the gaps between tiles and the
+space below the last row.
+
+The panel opens over the dimmed page, with a power switch and one row per
+writable channel: brightness, colour temperature, colour swatches, effects,
+speed, mode, target temperature or humidity, curtain position with
+Open/Close/Stop, and a Lock/Unlock button. The rows carry no captions; each
+control is recognisable by itself. A light's panel leads with a bulb showing
+its current colour.
+
+- Colour swatches and Open/Close/Stop are actions, not selections: tapping one
+  sends the command, and nothing stays highlighted. Effects, modes and speed
+  presets do show which one is active.
+- Sliders send one command on release rather than a burst while dragging. They
+  follow the device's reports whenever they are not being dragged, and every
+  report counts, even one that repeats the last value, so a slider the device
+  did not follow snaps back.
+- Open and Close put a curtain's position straight at 100 or 0, on the slider
+  and the tile, without waiting for the curtain. The command says where it is
+  going, and many drivers report their position only on arrival, or never.
+  `device_hub_set()` makes that assumption for cover options named "open" or
+  "close". A driver that does report while moving still moves the slider
+  through its reports. Stop assumes nothing: if the driver reports where it
+  stopped, the slider follows; if not, the slider keeps showing the end it was
+  heading for, because there is no way to know better.
+- Effects are one button naming the current effect. It opens a wheel picker
+  over the panel, an `lv_roller` in the style of an iOS picker: scroll until the
+  effect sits in the middle band, then Apply, or close it with the x (or a tap
+  outside) to leave the light as it is. Nothing is sent while scrolling, so the
+  light does not flash through the effects on the way. The wheel opens on the
+  effect running now.
+- Long mode lists, over four options, wrap onto rows of four buttons.
+
+Every tap is a request. The tile only changes when the device reports its new
+state back over MQTT, so the page always shows what the device really did.
+
+The room chips and the scene bar come from the configuration. Rooms are listed
+in the order their first device appears, and the chips are hidden when there
+is only one room. The scene bar disappears when there are no scenes.
+
+#### The device configuration
+
+Devices are described in a JSON document. `data/devices.json` is a complete
+example covering every device type, in both MQTT styles:
+
+```json
+{
+  "devices": [
+    {
+      "name": "Bedside lamp", "type": "light", "room": "Bedroom",
+      "state": "zigbee2mqtt/bedside_lamp", "command": "zigbee2mqtt/bedside_lamp/set",
+      "channels": {
+        "power":      { "key": "state" },
+        "brightness": { "key": "brightness", "max": 254 },
+        "color":      { "key": "color", "format": "rgb" }
+      }
+    },
+    {
+      "name": "Kettle", "type": "switch", "room": "Kitchen",
+      "channels": {
+        "power": { "state": "stat/kettle/POWER", "command": "cmnd/kettle/POWER" }
+      }
+    }
+  ],
+  "scenes": [
+    { "name": "Good night", "topic": "home/scene/set", "payload": { "scene": "good_night" } }
+  ]
+}
+```
+
+A device has a `name`, a `type`, an optional `room`, and a `channels` object.
+Each channel binds one attribute to MQTT. Device-level `state` and `command`
+topics are inherited by every channel that does not name its own. That keeps a
+Zigbee2MQTT device, where everything shares one topic, to one line per
+attribute.
+
+Types: `light`, `led_strip` (also accepted as `wled`), `switch`, `plug`,
+`fan`, `air_purifier`, `humidifier`, `dehumidifier`, `heater`, `curtain`,
+`thermostat`, `lock`, `sensor`, `contact`, `motion`.
+
+| Channel | Value | Defaults |
+| --- | --- | --- |
+| `power` | on/off | `on` "ON", `off` "OFF" |
+| `brightness` | percent of `min`..`max` | 0..100 |
+| `color_temp` | raw | 153..500 (mireds) |
+| `color` | RGB | `format` "hex" |
+| `effect` | one of `options` (required) | |
+| `speed` | percent, or one of `options` | 0..100 |
+| `mode` | one of `options` (required) | |
+| `position` | percent, 100 = open | 0..100 |
+| `cover` | one of `options` | OPEN, CLOSE, STOP |
+| `target_temperature` | number | 5..35, `step` 0.5 |
+| `target_humidity` | number | 30..80, `step` 5 |
+| `temperature`, `humidity`, `co2` | number, read-only | |
+| `lock` | locked/unlocked | `on` "LOCK", `off` "UNLOCK" |
+| `contact` | open/closed, read-only | `on` "OPEN", `off` "CLOSED" |
+| `motion` | detected/clear, read-only | `on` "ON", `off` "OFF" |
+
+Channel fields, all optional:
+
+- `state`: the topic the value is read from. Without one, the page assumes a
+  command worked.
+- `command`: the topic changes are published to. Without one the channel is
+  read-only; set `"command": ""` to stop a channel inheriting the device's.
+- `key`: read and write the value inside a JSON object. Dotted for nesting,
+  so `"AM2301.Humidity"` reads Tasmota's sensor report. Without a key, the
+  whole payload is the value.
+- `on` / `off`: payloads for the two states. They can be strings, booleans or
+  numbers, e.g. Zigbee2MQTT's door sensor is `"on": false, "off": true`
+  because it reports `contact: true` when the door is closed.
+- `min` / `max`: the device's raw range, for percentages.
+- `step`: increment for setpoint buttons.
+- `options`: names for effects, modes or speed presets, shown on the buttons.
+- `values`: what the device calls each option, one per option, when that is
+  not its name. WLED numbers its effects, so `"values": [0, 9]` sends and
+  reads 0 and 9 for "Solid" and "Rainbow". A numeric value goes into JSON as a
+  number.
+- `template`: a plain command with `{}` standing for the value, e.g. `"FX={}"`.
+- `tag`: read the value from between `<tag>` and `</tag>` in the payload, for
+  devices that report XML. Not both `tag` and `key`.
+- `format`: `"hex"` for `"#RRGGBB"`, `"rgb"` for `{"r":..,"g":..,"b":..}`,
+  or `r,g,b` as a plain payload.
+
+WLED has no single JSON state topic. It reports brightness on `<name>/g`
+(0 when off), colour on `<name>/c`, and its full status as XML on `<name>/v`.
+It takes `ON`/`OFF` and brightness on `<name>`, colour on `<name>/col`, and API
+commands on `<name>/api`, so an effect is sent as `FX=<id>` and read back from
+`<fx>`:
+
+```json
+{
+  "name": "TV backlight", "type": "wled", "room": "Living room",
+  "channels": {
+    "power":      { "state": "wled/tv/g", "command": "wled/tv" },
+    "brightness": { "state": "wled/tv/g", "command": "wled/tv", "max": 255 },
+    "color":      { "state": "wled/tv/c", "command": "wled/tv/col" },
+    "effect":     { "state": "wled/tv/v", "tag": "fx", "command": "wled/tv/api", "template": "FX={}",
+                    "options": ["Solid", "Breathe", "Rainbow", "Fire 2012"],
+                    "values":  [0, 2, 9, 66] }
+  }
+}
+```
+
+Effect ids are WLED's; check them against the effect list of your WLED
+version. Power reads the brightness topic: a bool channel that receives a
+number treats anything but 0 as on.
+
+A channel written as a bare string is a read-only state topic:
+`"temperature": "home/attic/temperature"`.
+
+On the way in, colours are also accepted as `{"hex": "#RRGGBB"}`, and
+booleans fall back to `true`/`on` and `false`/`off`, then to any number
+(non-zero is true). Options match either their value or their name. A JSON
+message that leaves a key out does not change that channel, so partial updates
+are safe.
+
+Limits: 32 devices, 6 channels per device, 6 scenes, 12 options per channel.
+Topics can be up to 95 characters. The parser reports the first problem with
+the device number and name, e.g. `device 4 (Curtains): unknown channel
+"postion"`, and a broken document never replaces a working one.
+
+#### Getting the configuration onto the clock
+
+The simplest delivery uses the broker the clock needs anyway. Publish the file
+as a retained message, and the clock receives it on every connect:
+
+```bash
+mosquitto_pub -h broker.local -r -t smartclock/config/devices -f devices.json
+```
+
+To change the devices, publish again. `ui_devices_feed_load()` takes the
+payload, and the page rebuilds. On the ESP32, raise esp-mqtt's
+`buffer.size` above the file's size, or the message arrives in fragments.
+
+#### Code layout and the simulated broker
+
+- `src/devices/` is plain C, with no LVGL: `device.h` is the model,
+  `device_config.c` the JSON parser (cJSON, which ESP-IDF ships as its `json`
+  component), and `device_hub.c` holds the live state. The hub matches
+  incoming topics to channels, extracts and scales values, and formats
+  commands. It owns no connection.
+- `ui_devices_feed.c` wires the hub to the page. In the simulator it also plays
+  the broker. It reads `data/devices.json` from the working directory, seeds
+  the example devices' state, and echoes every command back on the state
+  topics that read from it, 150 ms later, the way a real device confirms. A
+  templated command read back through a tag is answered in that tag, so WLED's
+  `FX=9` comes back as `<fx>9</fx>`. The pretend curtains behave like the
+  simplest real drivers: they report nothing while moving and nothing on Stop,
+  so their position comes only from a position command or from the end the
+  hub assumes for Open/Close. Every publish is logged as
+  `MQTT publish <topic> <payload>`.
+
+On the clock, an MQTT client replaces the simulated half:
+
+1. subscribe to the configuration topic and pass its payload to
+   `ui_devices_feed_load()`;
+2. subscribe to `device_hub_subscriptions()` (again after each load);
+3. feed every message to `device_hub_handle_message()`;
+4. publish whatever `device_hub_set_publish_cb()` hands over, and show the
+   connection with `page_smart_home_set_link()`.
+
+The hub is not thread-safe, and esp-mqtt calls back on its own task, so
+marshal messages onto the LVGL thread, or take `lv_lock()`, first.
+
+The device icons come from a second icon font, `UI_FONT_ICON_LG`
+(`ui_font_icons_48.c`), cut from the same Font Awesome source at 48 px. The
+command and code points are in `ui_theme.h`. Font Awesome Free has no blinds,
+which is why the curtain is drawn.
+
+### Settings
+
+The Settings page, last in the rail, has four tabs:
+
+- **Wi-Fi**: the connection status, the network name and password with
+  Connect, and beside them the networks a scan found. Tapping a network fills
+  in its name and, if it is secured, moves on to the password.
+- **MQTT**: broker and port, client ID, username and password, the device
+  configuration topic and TLS, then the status beside Save & connect.
+- **Date & time**: set automatically from a time server, or set the date and
+  time by hand with a wheel picker; automatic time zone (from the location of
+  the public IP) or one chosen from a list; then the 24-hour clock, the date
+  format (DD/MM, MM/DD or YYYY-MM-DD) and seconds. The date picker's wheels
+  follow the date format, and the time picker has an AM/PM wheel only on the
+  12-hour clock.
+- **Device**: brightness and idle brightness, each automatic or a level;
+  dark or light theme, accent colour, and how soon the ambient clock takes
+  over; then language (English only so far) and °C or °F.
+
+Brightness belongs to the backlight alone. Nothing on screen is drawn
+differently at any level. Idle brightness applies while the ambient clock face
+is showing. When a brightness is automatic, its slider sets how strongly the
+light sensor moves the backlight instead of a level, and the slider's name
+changes to say so.
+
+Device settings take effect as they change. Wi-Fi and MQTT credentials are only
+used when their button is pressed, so a half-typed password never drops a
+working connection, and a Wi-Fi network is only stored once it has been
+joined. Tapping a text field brings up an on-screen keyboard, and the tab
+scrolls the field clear of it.
+
+The settings are plain C in `src/settings/` and are stored as JSON with cJSON,
+like the device configuration, so the same code serves the simulator and the
+clock. Missing or out-of-range values take their defaults, so an old file
+still loads. `ui_settings_feed.c` loads and stores them and applies each one:
+
+| Setting | Applied by |
+| --- | --- |
+| Theme, accent | `ui_theme_set()`, then `ui_rebuild()` |
+| 24-hour clock, date format | `ui_format`, then `ui_rebuild()`, so every time and date on screen is written again |
+| Seconds | `ui_clock_feed` |
+| Time set by hand, time zone | `clock_time` |
+| Time server | SNTP on the clock |
+| Brightness, idle brightness | the backlight; a logged hook in the simulator |
+| Ambient clock after | `ui_set_idle_timeout()` |
+| Temperature unit, language | stored for the weather service and translations to use |
+
+#### Changing the theme without a restart
+
+The surface, text and accent tokens in `ui_theme.h` (`UI_COLOR_BG`,
+`UI_COLOR_TEXT`, `UI_COLOR_ACCENT`, ...) read from a runtime palette,
+`ui_palette`, which `ui_theme_set()` fills from a dark or light table and the
+chosen accent. Status and identity colours such as good/warn/bad, rain and the
+calendars are the same in both themes. The weather icons' greys and whites
+follow the theme so they stay visible on a white card.
+
+Widgets take their colours when they are built, so a change of theme is
+followed by `ui_rebuild()`. It gives every page its `on_hide` (which closes
+popups and panels on the top layer), keeps the user's alarms, builds the
+screen again, returns to the page that was showing, and has each feed tell the
+new pages what it last told the old ones (`ui_clock_feed_refresh()`,
+`ui_devices_feed_republish()`, `ui_settings_feed_republish()`). The rebuild is
+deferred with `lv_async_call()`, because the tap that asked for it lands on a
+button the rebuild deletes. `ui_theme_set()` also re-initialises LVGL's default
+theme, for the parts of stock widgets that no page styles: keyboard keys and
+dropdown lists.
+
+A page that holds state only in its widgets loses it in a rebuild. Keep such
+state in the page's statics, or behind a feed, as the alarms, devices and
+settings are.
+
+#### Times and dates
+
+Every time and date on screen goes through `ui_format.h`, which reads the
+24-hour and date format settings. That covers the clock, its date line and
+next-alarm chip, the alarm cards and editor wheels, calendar entries, and the
+weather page's hours, sunrise, sunset and "Updated" time. Nothing formats a
+time by hand, so one setting changes them all.
+
+| Function | 12-hour, DD/MM | 24-hour, MM/DD | YYYY-MM-DD |
+| --- | --- | --- | --- |
+| `ui_format_time` | 7:24 PM | 19:24 | |
+| `ui_format_clock` + `ui_format_meridiem` | 7:24 + PM | 19:24 + NULL | |
+| `ui_format_hour` | 2 PM | 14:00 | |
+| `ui_format_date_long` | Monday, 14 September | Monday, September 14 | Monday, 2026-09-14 |
+| `ui_format_date_short` | Mon 14 Sep | Mon Sep 14 | Mon 09-14 |
+| `ui_format_date_numeric` | 14/09/2026 | 09/14/2026 | 2026-09-14 |
+
+Text already on screen does not change by itself, so a change of either
+format rebuilds the UI, as a change of theme does. The alarms editor then comes
+back with the right wheels, 00-23 or 12-11 with AM/PM. Services that push text
+to pages (weather, calendar) must format through the same functions.
+
+The time itself comes from `clock_time` (`src/settings/`, plain C): the
+system clock (SNTP on the device) plus an offset when set by hand, in the
+chosen zone. Zones are POSIX TZ strings, e.g. `EET-2EEST,M3.5.0/3,M10.5.0/4`,
+which is what ESP-IDF's `setenv("TZ")` takes. `clock_time` works the
+daylight-saving rules out itself, so the simulator shows the same local time as
+the device would. The Date & time tab offers a table of common zones.
+
+Pickers use `ui_picker.h`, a shared iOS-style wheel picker with up to four
+wheels, Apply and a close button; the lights' effect picker uses it too.
+
+#### In the simulator
+
+Settings live in `data/settings.json`, which is git-ignored because it holds
+passwords. A scan finds a fixed list of networks after a second. Joining works
+for an open network, or for any password of eight characters or more, and the
+broker always accepts the connection, which also sets the Devices page's
+broker status. With no broker set, the Devices page keeps its simulated one.
+
+Network time is the computer's clock. A time set by hand is kept as an offset
+from it until the simulator closes. Automatic time zone takes the computer's
+current UTC offset (shown as e.g. `UTC+03:00`), which gives the right time but
+knows no daylight-saving rules. Brightness only logs what the backlight would
+be set to, awake or idle.
+
+Each of these is a `TODO` in `ui_settings_feed.c` for the clock: NVS, the
+backlight PWM and light sensor, SNTP against the time server, `settimeofday()`
+and the RTC, an IP geolocation lookup for the time zone, `esp_wifi` and
+`esp-mqtt`.
+
+### Calendar colours
+
+Entries in the events section carry no label. The bar in front of the title is
+the only thing saying which calendar an entry came from, so the four colours
+are fixed and defined once in `ui_theme.h`:
+
+| Calendar | Colour | `page_clock_calendar_t` |
+| --- | --- | --- |
+| National holidays | green | `PAGE_CLOCK_CAL_HOLIDAY` |
+| Birthdays, anniversaries | yellow | `PAGE_CLOCK_CAL_OCCASION` |
+| Personal | blue | `PAGE_CLOCK_CAL_PERSONAL` |
+| Work meetings | purple | `PAGE_CLOCK_CAL_WORK` |
+
+Each calendar is routed to one of the two columns. The left column is today's
+schedule and labels entries with a clock time; the right column is the next
+fortnight of all-day entries -- holidays, birthdays, name days -- and labels
+them with the day instead. Neither column is titled: the timestamps and the
+colours are what tell them apart.
+
+The routing is configuration rather than a UI setting, and defaults to
+holidays and occasions on the right, personal and work on the left:
+
+```c
+page_clock_set_calendar_column(PAGE_CLOCK_CAL_WORK, PAGE_CLOCK_COLUMN_UPCOMING);
+```
+
+`page_clock_set_events()` then takes one merged, already-sorted list and routes
+each entry by its calendar. The columns fill independently and each holds
+`PAGE_CLOCK_EVENTS_PER_COLUMN` entries, so a busy day cannot crowd out the
+fortnight ahead. Deciding *which* events to pass -- today's, plus the next 14
+days of all-day entries -- stays with the caller, since the page has no notion
+of dates.
+
+Fill `time` for timed entries and `day` for all-day ones; whichever matches the
+column an entry lands in is the one shown, with a fallback to the other.
+
+### Feeding data in
+
+Pages expose typed setters and never reach out for data themselves, so the
+clock service, weather client, sensor driver and MQTT client stay free of
+LVGL:
+
+```c
+page_clock_set_time("07:24", "31", "AM");
+page_air_quality_push_sample(18);
+page_radio_set_state(PAGE_RADIO_STATE_PLAYING, NULL);
+page_smart_home_update_device(index);
+```
+
+Input works the other way, through callbacks (`page_radio_set_play_cb()`,
+`page_smart_home_set_command_cb()`, ...). Treat those as *requests*: let the
+real state come back through the setters rather than assuming the action
+succeeded. Every page currently ships with placeholder content so the layout
+is visible before any of it is wired up; search for `TODO` for the seams.
+
+### Alignment and icons
+
+`section_create()` centres its stack on both axes, so each region sits in the
+middle of its own grid cell instead of hugging the top-left. The clock block
+does the same within the cell its anchor reserves. Anything that should fill
+its cell rather than be centred by it -- the calendar columns, for instance --
+has to be content-sized, not `flex_grow`n, or it swallows the free space the
+centring needs.
+
+The on-board sensor readouts are icon-and-value only, with no caption: the icon
+alone says which sensor it is, so both are drawn large enough to read across a
+room. Humidity uses `LV_SYMBOL_TINT`, but the built-in Montserrat/FontAwesome
+subset has no thermometer, so `thermometer_create()` draws one from two small
+objects -- a rounded stem on a round bulb, scaled to a requested height. Swap
+both for a proper weather icon font when you add one.
+
+Sections come in two shapes. `section_create()` centres its whole stack in the
+cell, which suits the weather column. `header_section_create()` pins the
+caption to the top and hands back a body that fills everything below it, which
+is what the calendar and air quality sections use.
+
+Calendar entries stack from the top at their natural height rather than
+stretching to fill, and each column scrolls once there are more than fit.
+`PAGE_CLOCK_EVENTS_PER_COLUMN` is the point at which entries start being
+*dropped*, not the point at which they stop being visible -- keep it well above
+what fits on screen, or the scrolling can never engage.
+
+Watch for `flex_grow` when a parent is centring its children: a grown child
+swallows exactly the free space the centring needs, so it has to be one or the
+other.
+
+### Working with the theme
+
+Build from the tokens in `ui_theme.h` (`UI_COLOR_*`, `UI_FONT_*`, `UI_GAP`,
+`UI_RADIUS`, `UI_TOUCH_MIN`) rather than literals, and use `ui_card_create()` /
+`ui_tile_create()` / `ui_label_create()` / `ui_slider_create()` so pages stay
+consistent.
+
+Use `ui_slider_create()` for every slider. Its knob stands out past the track
+on all sides, and a row sized to its content clips it. Making the row
+overflow-visible does not help, because LVGL still clips to the parent's
+drawing area. So the helper gives the slider top and bottom margins covering
+the overhang, which flex and grid rows make room for. The margins are
+`UI_SLIDER_KNOB_ROOM`: the knob as it is while pressed, plus a couple of
+pixels. The theme's own pressed growth scales with DPI, so the helper pins it
+to `UI_SLIDER_KNOB_GROW`, which keeps the reserved room exact.
+
+The ends are left to the row. Side margins would be wrong, because flex does
+not subtract a growing child's side margins from the width it hands out, so
+they push the neighbouring labels out of the row. The row has to leave
+`UI_SLIDER_KNOB_OVERHANG` beside each end of the track: as side padding where
+the slider meets the edge of the row, and as the column gap where it meets a
+sibling. Otherwise, at 0 or 100, the knob covers the neighbouring label.
+
+Two things worth knowing:
+
+- **Only `0x20-0x7F`, `0xB0` and `0x2022` exist** in the built-in Montserrat
+  fonts. Use `UI_DEG` and `UI_BULLET` for the latter two; there is no micro
+  sign or superscript, so write `ug/m3`, not the typographic form.
+- **`LV_LABEL_LONG_MODE_DOTS` ellipsises on vertical overflow**, not
+  horizontal. A label left at `LV_SIZE_CONTENT` height just grows to a second
+  line and never shows dots. Use `ui_label_single_line(label, font)`, which
+  pins the height to one line; the width still has to come from `flex_grow` or
+  an explicit width.
 
 ## Run demos and examples
 

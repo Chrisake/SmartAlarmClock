@@ -14,6 +14,7 @@
 #if LV_USE_OS == LV_OS_FREERTOS
 
 #include "hal/hal.h"
+#include "board/board.h"
 #include <stdio.h>
 
 // ........................................................................................................
@@ -127,7 +128,7 @@ void lvgl_task(void *pvParameters)
     lv_init();
 
     /*Initialize the HAL (display, input devices, tick) for LVGL*/
-    sdl_hal_init(320, 480);
+    sdl_hal_init(BOARD_HOR_RES, BOARD_VER_RES);
     /* Show simple hello world screen */
     create_hello_world_screen();
 

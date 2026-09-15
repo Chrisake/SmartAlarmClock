@@ -25,6 +25,8 @@
 #include <SDL.h>
 
 #include "hal/hal.h"
+#include "board/board.h"
+#include "ui/ui.h"
 
 /*********************
  *      DEFINES
@@ -61,15 +63,13 @@ int main(int argc, char **argv)
   lv_init();
 
   /*Initialize the HAL (display, input devices, tick) for LVGL*/
-  sdl_hal_init(320, 480);
+  sdl_hal_init(BOARD_HOR_RES, BOARD_VER_RES);
 
-  /* Run the default demo */
-  /* To try a different demo or example, replace this with one of: */
-  /* - lv_demo_benchmark(); */
-  /* - lv_demo_stress(); */
-  /* - lv_example_label_1(); */
-  /* - etc. */
-  lv_demo_widgets();
+  /*Build the Smart Alarm Clock UI*/
+  ui_init();
+
+  /* To poke at an LVGL demo instead, comment out ui_init() above and call one
+   * of these: lv_demo_widgets(), lv_demo_benchmark(), lv_demo_stress(), ... */
 
   while(1) {
     /* Periodically call the lv_task handler.

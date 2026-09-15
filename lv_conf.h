@@ -127,8 +127,14 @@
  * RENDERING CONFIGURATION
  *============================================================================*/
 
-/** Color depth: 1 (I1), 8 (L8), 16 (RGB565), 24 (RGB888), 32 (XRGB8888) */
-#define LV_COLOR_DEPTH 32
+/** Color depth: 1 (I1), 8 (L8), 16 (RGB565), 24 (RGB888), 32 (XRGB8888)
+ *
+ *  Normally supplied by the board profile (boards/boards.cmake); the value
+ *  below is the fallback and matches the default board, whose panel runs in
+ *  RGB565. Change the board profile rather than this line. */
+#ifndef LV_COLOR_DEPTH
+#define LV_COLOR_DEPTH 16
+#endif
 
 /** 0: no adjustment, get the integer part of the result (round down)
  *  64: round up from x.75
@@ -141,8 +147,14 @@
 /** Default display refresh, input device read and animation step period. */
 #define LV_DEF_REFR_PERIOD 33
 
-/** Used to initialize default sizes such as widget sizes and style paddings. */
-#define LV_DPI_DEF 130
+/** Used to initialize default sizes such as widget sizes and style paddings.
+ *
+ *  Normally supplied by the board profile (boards/boards.cmake); the value
+ *  below is the fallback for the default board:
+ *  sqrt(1024^2 + 600^2) / 7.0" = 169.5 DPI. */
+#ifndef LV_DPI_DEF
+#define LV_DPI_DEF 170
+#endif
 
 /** Align the stride of all layers and images to this many bytes. */
 #define LV_DRAW_BUF_STRIDE_ALIGN 1
@@ -204,7 +216,7 @@
 #define LV_USE_SNAPSHOT 0
 
 /** Backend that gives the SW renderer vector graphics support. */
-#define LV_USE_THORVG 0
+#define LV_USE_THORVG 1
 
 #if LV_USE_THORVG
 /** Build the ThorVG copy shipped with LVGL instead of linking an external one. */
@@ -273,7 +285,7 @@
 #define LV_DRAW_SW_COMPLEX 1
 
 /** Each additional stop costs (sizeof(lv_color_t) + 1) bytes. */
-#define LV_GRADIENT_MAX_STOPS 2
+#define LV_GRADIENT_MAX_STOPS 3
 
 /** Adds linear gradients at an angle, plus radial and conical gradients. */
 #define LV_USE_DRAW_SW_COMPLEX_GRADIENTS 1
@@ -799,7 +811,7 @@
 
 #if LV_USE_THEME_DEFAULT
 /** Dark mode */
-#define LV_THEME_DEFAULT_DARK 0
+#define LV_THEME_DEFAULT_DARK 1
 
 /** Grow on press */
 #define LV_THEME_DEFAULT_GROW 1

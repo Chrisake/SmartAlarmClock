@@ -10,3 +10,9 @@ bin/
 
 # MacOS file
 .DS_Store
+
+# Simulator settings, written by the Settings page; holds Wi-Fi and MQTT passwords
+data/settings.json
+
+# Simulator SD card: the saved radio stations and their favicons
+data/sdcard/
