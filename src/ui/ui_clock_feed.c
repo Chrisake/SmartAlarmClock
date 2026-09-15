@@ -7,6 +7,7 @@
  *********************/
 
 #include "ui/ui_clock_feed.h"
+#include "ui/ui_alarm_feed.h"
 #include "ui/ui_format.h"
 #include "ui/pages/alarms/page_alarms.h"
 #include "ui/pages/clock/page_clock.h"
@@ -27,7 +28,6 @@
  **********************/
 
 static void tick_cb(lv_timer_t * timer);
-static void alarms_changed(const page_alarm_t alarms[], uint32_t count);
 static void push_time(const struct tm * now);
 static void push_next_alarm(const struct tm * now);
 
@@ -53,8 +53,6 @@ static int last_minute = -1;
 
 void ui_clock_feed_init(void)
 {
-    page_alarms_set_changed_cb(alarms_changed);
-
     lv_timer_create(tick_cb, TICK_PERIOD_MS, NULL);
     tick_cb(NULL);
 }
@@ -142,6 +140,16 @@ static uint32_t minutes_until(const page_alarm_t * alarm, int now_wday, int now_
 
 static void push_next_alarm(const struct tm * now)
 {
+    /*A snoozed alarm is back within minutes: show it rather than the next.*/
+    int snooze_hour, snooze_minute;
+    if(ui_alarm_feed_snooze(alarm_name, sizeof(alarm_name), &snooze_hour, &snooze_minute)) {
+        if(!alarm_name[0]) lv_strlcpy(alarm_name, "Alarm", sizeof(alarm_name));
+        ui_format_time(alarm_time, sizeof(alarm_time), snooze_hour, snooze_minute);
+        lv_strlcpy(alarm_when, "Snoozed", sizeof(alarm_when));
+        page_clock_set_next_alarm(alarm_name, alarm_time, alarm_when, true);
+        return;
+    }
+
     uint32_t             count = 0;
     const page_alarm_t * alarms = page_alarms_get_alarms(&count);
 
@@ -179,12 +187,4 @@ static void push_next_alarm(const struct tm * now)
     else lv_snprintf(alarm_when, sizeof(alarm_when), "on %s", ui_format_weekday(now->tm_wday + best_days, false));
 
     page_clock_set_next_alarm(alarm_name, alarm_time, alarm_when, true);
-}
-
-static void alarms_changed(const page_alarm_t alarms[], uint32_t count)
-{
-    LV_UNUSED(alarms);
-    LV_UNUSED(count);
-
-    ui_clock_feed_refresh();
 }

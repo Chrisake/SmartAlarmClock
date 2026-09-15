@@ -57,6 +57,7 @@ static void sensor_option_clicked(lv_event_t * e);
 
 static int32_t    plot_value(page_aq_metric_t metric, int32_t value);
 static lv_color_t metric_color(page_aq_metric_t metric);
+static void       refresh_clicked(lv_event_t * e);
 
 /**********************
  *  STATIC VARIABLES
@@ -72,25 +73,24 @@ static const ui_page_t desc = {
     .on_hide = sensor_popup_close,
 };
 
-/** Tile captions, placeholder contents and default trace range, in
- *  page_aq_metric_t order. Trace colours are in metric_color(). */
+/** Tile captions, units and default trace range, in page_aq_metric_t order.
+ *  Trace colours are in metric_color(). */
 static const struct {
     const char * caption;
-    const char * value;
     const char * unit;
     int32_t      min;
     int32_t      max;
 } metric_defaults[PAGE_AQ_METRIC_COUNT] = {
-    [PAGE_AQ_METRIC_PM1]      = {"PM1.0",    "5",   "ug/m3",    0,   40},
-    [PAGE_AQ_METRIC_PM25]     = {"PM2.5",    "8",   "ug/m3",    0,   60},
-    [PAGE_AQ_METRIC_CO2]      = {"CO2",      "640", "ppm",      400, 2000},
-    [PAGE_AQ_METRIC_VOC]      = {"VOC",      "112", "index",    0,   500},
-    [PAGE_AQ_METRIC_TEMP]     = {"TEMP",     "21",  UI_DEG "C", 10,  35},
-    [PAGE_AQ_METRIC_PM4]      = {"PM4.0",    "11",  "ug/m3",    0,   80},
-    [PAGE_AQ_METRIC_PM10]     = {"PM10",     "14",  "ug/m3",    0,   100},
-    [PAGE_AQ_METRIC_NOX]      = {"NOx",      "1",   "index",    0,   500},
-    [PAGE_AQ_METRIC_HCHO]     = {"HCHO",     "18",  "ppb",      0,   100},
-    [PAGE_AQ_METRIC_HUMIDITY] = {"HUMIDITY", "46",  "%",        0,   100},
+    [PAGE_AQ_METRIC_PM1]      = {"PM1.0",    "ug/m3",    0,   40},
+    [PAGE_AQ_METRIC_PM25]     = {"PM2.5",    "ug/m3",    0,   60},
+    [PAGE_AQ_METRIC_CO2]      = {"CO2",      "ppm",      400, 2000},
+    [PAGE_AQ_METRIC_VOC]      = {"VOC",      "index",    0,   500},
+    [PAGE_AQ_METRIC_TEMP]     = {"TEMP",     UI_DEG "C", 10,  35},
+    [PAGE_AQ_METRIC_PM4]      = {"PM4.0",    "ug/m3",    0,   80},
+    [PAGE_AQ_METRIC_PM10]     = {"PM10",     "ug/m3",    0,   100},
+    [PAGE_AQ_METRIC_NOX]      = {"NOx",      "index",    0,   500},
+    [PAGE_AQ_METRIC_HCHO]     = {"HCHO",     "ppb",      0,   100},
+    [PAGE_AQ_METRIC_HUMIDITY] = {"HUMIDITY", "%",        0,   100},
 };
 
 static const char * range_labels[PAGE_AQ_RANGE_COUNT] = {"1h", "24h", "7d"};
@@ -125,6 +125,12 @@ static page_aq_range_t     range_current = PAGE_AQ_RANGE_24H;
 static page_aq_range_cb_t  range_cb;
 static page_aq_plot_cb_t   plot_cb;
 
+static lv_obj_t *           readings_status[2];   /**< Over the chart, and over the analysis */
+static lv_obj_t *           forecast_status;
+static lv_obj_t *           forecast_updated;
+static lv_obj_t *           forecast_refresh;
+static page_aq_refresh_cb_t refresh_cb;
+
 static lv_obj_t * index_value;
 static lv_obj_t * index_band;
 static lv_obj_t * stat_min;
@@ -151,6 +157,13 @@ const ui_page_t * page_air_quality_desc(void)
 
 void page_air_quality_set_index(int32_t aqi)
 {
+    if(aqi < 0) {
+        lv_label_set_text(index_value, "--");
+        lv_obj_set_style_text_color(index_value, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
+        lv_label_set_text(index_band, "");
+        return;
+    }
+
     lv_color_t color = ui_aqi_color(aqi);
 
     lv_label_set_text_fmt(index_value, "%d", (int)aqi);
@@ -273,6 +286,39 @@ void page_air_quality_set_plot_cb(page_aq_plot_cb_t cb)
     plot_cb = cb;
 }
 
+void page_air_quality_set_readings_state(ui_status_state_t state, const char * message)
+{
+    /*The analysis column is narrow: the chart says why.*/
+    ui_status_set(readings_status[0], state, message);
+    ui_status_set(readings_status[1], state, NULL);
+}
+
+void page_air_quality_set_forecast_state(ui_status_state_t state, const char * message)
+{
+    ui_status_set(forecast_status, state, message);
+}
+
+void page_air_quality_set_forecast_updated(const char * updated, bool stale)
+{
+    lv_label_set_text(forecast_updated, updated ? updated : "");
+    lv_obj_set_style_text_color(forecast_updated, stale ? UI_COLOR_WARN : UI_COLOR_TEXT_DIM, LV_PART_MAIN);
+}
+
+void page_air_quality_set_forecast_refreshing(bool refreshing)
+{
+    ui_refresh_set_busy(forecast_refresh, refreshing);
+}
+
+void page_air_quality_set_refresh_cb(page_aq_refresh_cb_t cb)
+{
+    refresh_cb = cb;
+}
+
+page_aq_range_t page_air_quality_get_range(void)
+{
+    return range_current;
+}
+
 /**********************
  *   STATIC FUNCTIONS
  **********************/
@@ -361,7 +407,7 @@ static void tiles_card_create(lv_obj_t * parent)
 
         metrics[i].tile  = tile;
         metrics[i].dot   = dot;
-        metrics[i].value = ui_label_create(reading, metric_defaults[i].value, UI_FONT_LG, UI_COLOR_TEXT);
+        metrics[i].value = ui_label_create(reading, "--", UI_FONT_LG, UI_COLOR_TEXT_DIM);
         metrics[i].unit  = ui_label_create(reading, metric_defaults[i].unit, UI_FONT_XS, UI_COLOR_TEXT_DIM);
         /*Roughly lines the unit up with the value's baseline.*/
         lv_obj_set_style_pad_bottom(metrics[i].unit, 5, LV_PART_MAIN);
@@ -369,18 +415,7 @@ static void tiles_card_create(lv_obj_t * parent)
         metrics[i].series = lv_chart_add_series(chart, color, LV_CHART_AXIS_PRIMARY_Y);
         metrics[i].min    = metric_defaults[i].min;
         metrics[i].max    = metric_defaults[i].max;
-
-        /*Placeholder trace so the card reads correctly before real samples
-         *land. Two superimposed sines, phase-shifted per metric so the traces
-         *do not sit on top of each other.*/
-        int32_t phase = (int32_t)i * 37;
-        for(uint32_t p = 0; p < PAGE_AQ_HISTORY_POINTS; p++) {
-            int32_t angle = (int32_t)p * 360 / PAGE_AQ_HISTORY_POINTS;
-            int32_t value = PLOT_SCALE / 2
-                            + (lv_trigo_sin((int16_t)(angle * 2 + phase)) * 250) / LV_TRIGO_SIN_MAX
-                            + (lv_trigo_sin((int16_t)(angle * 5 + 40 + phase * 3)) * 110) / LV_TRIGO_SIN_MAX;
-            lv_chart_set_next_value(chart, metrics[i].series, value);
-        }
+        lv_chart_set_all_values(chart, metrics[i].series, LV_CHART_POINT_NONE);
 
         /*PM2.5 is the one worth watching by default.*/
         page_air_quality_set_plotted((page_aq_metric_t)i, i == PAGE_AQ_METRIC_PM25);
@@ -389,16 +424,6 @@ static void tiles_card_create(lv_obj_t * parent)
 
 static void sensor_button_create(lv_obj_t * parent)
 {
-    /*Placeholder list until the sensor service registers the real ones.
-     *Deliberately interleaved: the popup does the grouping.*/
-    static const page_aq_sensor_t placeholder[] = {
-        {"Bedroom",     false},
-        {"Living Room", false},
-        {"Garden",      true},
-        {"Kitchen",     false},
-        {"Balcony",     true},
-    };
-
     sensor_button = lv_button_create(parent);
     lv_obj_set_grid_cell(sensor_button, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 0, 2);
     lv_obj_set_style_radius(sensor_button, UI_RADIUS - 4, LV_PART_MAIN);
@@ -429,7 +454,7 @@ static void sensor_button_create(lv_obj_t * parent)
 
     ui_label_create(sensor_strip, LV_SYMBOL_DOWN, UI_FONT_XS, UI_COLOR_TEXT_DIM);
 
-    page_air_quality_set_sensors(placeholder, sizeof(placeholder) / sizeof(placeholder[0]));
+    sensor_name_update();
 }
 
 static void chart_card_create(lv_obj_t * parent)
@@ -484,6 +509,8 @@ static void chart_card_create(lv_obj_t * parent)
     lv_obj_center(chart_hint);
 
     range_select(range_current);
+
+    readings_status[0] = ui_status_create(card, UI_COLOR_CARD, NULL, NULL);
 }
 
 static void analysis_card_create(lv_obj_t * parent)
@@ -493,10 +520,10 @@ static void analysis_card_create(lv_obj_t * parent)
 
     ui_card_title(card, "ANALYSIS");
 
-    index_value = ui_label_create(card, "42", UI_FONT_XL, UI_COLOR_GOOD);
+    index_value = ui_label_create(card, "--", UI_FONT_XL, UI_COLOR_TEXT_DIM);
     /*Band names run long ("Unhealthy for sensitive groups"), so this one is
      *deliberately allowed to wrap rather than being ellipsised.*/
-    index_band = ui_label_create(card, "Good", UI_FONT_SM, UI_COLOR_TEXT);
+    index_band = ui_label_create(card, "", UI_FONT_SM, UI_COLOR_TEXT);
     lv_label_set_long_mode(index_band, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_width(index_band, LV_PCT(100));
 
@@ -523,27 +550,33 @@ static void analysis_card_create(lv_obj_t * parent)
     stat_avg = stat_values[1];
     stat_max = stat_values[2];
 
-    stat_trend = ui_label_create(card, "Steady", UI_FONT_SM, UI_COLOR_ACCENT);
+    stat_trend = ui_label_create(card, "", UI_FONT_SM, UI_COLOR_ACCENT);
 
-    advice_label = ui_label_create(card, "Air quality is satisfactory.", UI_FONT_XS, UI_COLOR_TEXT_DIM);
+    advice_label = ui_label_create(card, "", UI_FONT_XS, UI_COLOR_TEXT_DIM);
     lv_label_set_long_mode(advice_label, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_width(advice_label, LV_PCT(100));
+
+    readings_status[1] = ui_status_create(card, UI_COLOR_CARD, NULL, NULL);
 }
 
 static void forecast_card_create(lv_obj_t * parent)
 {
-    /*Spread across the AQI bands so the colour coding is visible up front.*/
-    static const struct {
-        const char * when;
-        int32_t      aqi;
-    } placeholder[PAGE_AQ_FORECAST_SLOTS] = {
-        {"Now", 42}, {"+3h", 48}, {"+6h", 67}, {"+9h", 104}, {"+12h", 88}, {"Tomorrow", 51},
-    };
-
     lv_obj_t * card = ui_card_create(parent);
     lv_obj_set_grid_cell(card, LV_GRID_ALIGN_STRETCH, 0, 2, LV_GRID_ALIGN_STRETCH, 2, 1);
 
-    ui_card_title(card, "FORECAST");
+    /*The caption, then how fresh the forecast is and a way to fetch it again.
+     *No taller than the caption alone, or the strip loses its room.*/
+    lv_obj_t * header = transparent_box_create(card);
+    lv_obj_set_width(header, LV_PCT(100));
+    lv_obj_set_style_pad_column(header, 8, LV_PART_MAIN);
+    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t * caption = ui_card_title(header, "FORECAST");
+    lv_obj_set_flex_grow(caption, 1);
+
+    forecast_updated = ui_label_create(header, "", UI_FONT_XS, UI_COLOR_TEXT_DIM);
+    forecast_refresh = ui_refresh_create(header, refresh_clicked, NULL);
 
     lv_obj_t * strip = transparent_box_create(card);
     lv_obj_set_width(strip, LV_PCT(100));
@@ -556,11 +589,11 @@ static void forecast_card_create(lv_obj_t * parent)
         lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-        lv_obj_t * when = ui_label_create(col, placeholder[i].when, UI_FONT_XS, UI_COLOR_TEXT_DIM);
+        lv_obj_t * when = ui_label_create(col, "", UI_FONT_XS, UI_COLOR_TEXT_DIM);
 
         lv_obj_t * pill = lv_obj_create(col);
         lv_obj_set_size(pill, 62, 38);
-        lv_obj_set_style_bg_color(pill, ui_aqi_color(placeholder[i].aqi), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(pill, UI_COLOR_TRACK, LV_PART_MAIN);
         lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_set_style_border_width(pill, 0, LV_PART_MAIN);
         lv_obj_set_style_radius(pill, 10, LV_PART_MAIN);
@@ -568,7 +601,7 @@ static void forecast_card_create(lv_obj_t * parent)
         lv_obj_set_scrollable(pill, false);
 
         lv_obj_t * value = lv_label_create(pill);
-        lv_label_set_text_fmt(value, "%d", (int)placeholder[i].aqi);
+        lv_label_set_text(value, "");
         lv_obj_set_style_text_font(value, UI_FONT_MD, LV_PART_MAIN);
         lv_obj_set_style_text_color(value, lv_color_black(), LV_PART_MAIN);
         lv_obj_center(value);
@@ -577,7 +610,10 @@ static void forecast_card_create(lv_obj_t * parent)
         forecast[i].when  = when;
         forecast[i].pill  = pill;
         forecast[i].value = value;
+        lv_obj_set_hidden(col, true);
     }
+
+    forecast_status = ui_status_create(card, UI_COLOR_CARD, refresh_clicked, NULL);
 }
 
 /**
@@ -780,6 +816,7 @@ static int32_t plot_value(page_aq_metric_t metric, int32_t value)
     int32_t min = metrics[metric].min;
     int32_t max = metrics[metric].max;
 
+    if(value == LV_CHART_POINT_NONE) return LV_CHART_POINT_NONE;
     if(max <= min) return 0;
 
     int32_t scaled = (int32_t)(((int64_t)value - min) * PLOT_SCALE / ((int64_t)max - min));
@@ -805,4 +842,10 @@ static lv_color_t metric_color(page_aq_metric_t metric)
         case PAGE_AQ_METRIC_HUMIDITY: return UI_COLOR_AQ_HUMIDITY;
         default:                      return UI_COLOR_TEXT_DIM;
     }
+}
+
+static void refresh_clicked(lv_event_t * e)
+{
+    LV_UNUSED(e);
+    if(refresh_cb) refresh_cb();
 }

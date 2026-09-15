@@ -7,10 +7,13 @@
  *********************/
 
 #include "ui/ui.h"
+#include "ui/ui_air_feed.h"
+#include "ui/ui_alarm_feed.h"
 #include "ui/ui_clock_feed.h"
 #include "ui/ui_devices_feed.h"
 #include "ui/ui_radio_feed.h"
 #include "ui/ui_settings_feed.h"
+#include "ui/ui_weather_feed.h"
 #include "ui/ui_page.h"
 #include "ui/ui_theme.h"
 
@@ -95,11 +98,20 @@ void ui_init(void)
      *which alarm rings next -- is driven from here.*/
     ui_clock_feed_init();
 
+    /*The alarms kept, and rung when they are due.*/
+    ui_alarm_feed_init();
+
     /*The devices page's configuration, state and (in the simulator) broker.*/
     ui_devices_feed_init();
 
-    /*The saved radio stations, the station directory and the stream player.*/
+    /*The saved radio stations, the station directory and the stream player.
+     *The alarm editor's sound menu gets the stations from here too.*/
     ui_radio_feed_init();
+
+    /*The forecasts, and the air quality from the sensors and the forecast.
+     *Before the settings feed, which brings up the broker the readings go to.*/
+    ui_weather_feed_init();
+    ui_air_feed_init();
 
     /*Applies the rest of the settings and answers the settings page.*/
     ui_settings_feed_init();
@@ -138,6 +150,8 @@ void ui_rebuild(void)
     ui_clock_feed_refresh();
     ui_devices_feed_republish();
     ui_radio_feed_republish();
+    ui_weather_feed_republish();
+    ui_air_feed_republish();
     ui_settings_feed_republish();
 }
 

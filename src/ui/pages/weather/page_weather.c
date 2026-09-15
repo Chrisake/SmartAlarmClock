@@ -7,25 +7,36 @@
  *********************/
 
 #include "ui/pages/weather/page_weather.h"
-#include "ui/ui_format.h"
+#include "ui/ui_moon_icon.h"
 #include "ui/ui_theme.h"
 
 /*********************
  *      DEFINES
  *********************/
 
-/** Height of the current-conditions card. */
-#define NOW_HEIGHT 140
+/** Height of the current-conditions card: two rows of readouts, under the freshness line. */
+#define NOW_HEIGHT 160
 
-/** Height of the 24-hour card. The week takes whatever is left. */
+/** Side of the moon drawn beside how much of it is lit. */
+#define MOON_ICON_SIZE 18
+
+/** Height of the hourly card. The week takes whatever is left. */
 #define HOURLY_HEIGHT 148
 
-#define NOW_ICON_SIZE  96
+#define NOW_ICON_SIZE  72
 #define HOUR_ICON_SIZE 48
 #define DAY_ICON_SIZE  40
 
-/** Width of the column holding the condition, high/low and location. */
-#define NOW_SUMMARY_WIDTH 220
+/** Width of the column holding the condition, high/low and location. A long
+ *  condition wraps onto a second line at its spaces, so the readouts keep their
+ *  room; the longest word, "Thunderstorm", still fits. */
+#define NOW_SUMMARY_WIDTH 148
+
+/** Gaps between the current-conditions card's parts, and between its readouts'
+ *  equal columns: tight enough that "100% Lit" with its arrow, "12 km/h NW" and
+ *  "Wed 30 Sep" each fit a column. */
+#define NOW_GAP      12
+#define NOW_STAT_GAP 10
 
 /** Thickness of a day's temperature range bar. */
 #define RANGE_BAR_WIDTH 8
@@ -59,8 +70,10 @@ static void hourly_card_create(lv_obj_t * parent);
 static void daily_card_create(lv_obj_t * parent);
 
 static lv_obj_t * box_create(lv_obj_t * parent);
+static void       stat_create(lv_obj_t * grid, uint32_t col, uint32_t row, const char * caption, lv_obj_t ** value);
 static void       temp_label_set(lv_obj_t * label, int32_t temp);
 static void       rain_label_set(lv_obj_t * label, int32_t chance);
+static void       refresh_clicked(lv_event_t * e);
 
 /**********************
  *  STATIC VARIABLES
@@ -72,49 +85,6 @@ static const ui_page_t desc = {
     .create  = create,
     .on_show = NULL,
     .on_hide = NULL,
-};
-
-/*Placeholder forecast, so the layout reads correctly before the weather
- *service reports. Varied on purpose: every icon but snow, dry and wet slots,
- *and a week whose highs and lows move enough to show off the range bars.*/
-static const page_weather_now_t now_defaults = {
-    .condition   = UI_WEATHER_PARTLY_CLOUDY,
-    .summary     = "Partly cloudy",
-    .temp        = 24,
-    .feels_like  = 25,
-    .high        = 27,
-    .low         = 18,
-    .humidity    = 58,
-    .rain_chance = 20,
-    .wind        = "14 km/h N",
-    .sunrise     = NULL,   /*Times are formatted when the page is built, in create()*/
-    .sunset      = NULL,
-};
-
-/*The sample strip, every four hours from 2 PM, as hours of the day so they
- *follow the clock setting.*/
-static const struct {
-    uint8_t      hour;
-    ui_weather_t condition;
-    int32_t      temp;
-    int32_t      rain_chance;
-} hour_defaults[PAGE_WEATHER_HOURS] = {
-    {14, UI_WEATHER_PARTLY_CLOUDY,       26, 10},
-    {18, UI_WEATHER_SHOWERS,             23, 60},
-    {22, UI_WEATHER_PARTLY_CLOUDY_NIGHT, 20, 30},
-    {2,  UI_WEATHER_CLEAR_NIGHT,         18, 0},
-    {6,  UI_WEATHER_FOG,                 17, 10},
-    {10, UI_WEATHER_CLEAR,               22, 0},
-};
-
-static const page_weather_day_t day_defaults[PAGE_WEATHER_DAYS] = {
-    {"Today", UI_WEATHER_PARTLY_CLOUDY, 18, 27, 20},
-    {"Tue",   UI_WEATHER_RAIN,          17, 22, 80},
-    {"Wed",   UI_WEATHER_THUNDERSTORM,  16, 21, 90},
-    {"Thu",   UI_WEATHER_CLOUDY,        16, 23, 30},
-    {"Fri",   UI_WEATHER_CLEAR,         17, 26, 0},
-    {"Sat",   UI_WEATHER_CLEAR,         19, 29, 0},
-    {"Sun",   UI_WEATHER_SHOWERS,       18, 25, 40},
 };
 
 static const char * const stat_captions[STAT_COUNT] = {
@@ -131,7 +101,16 @@ static lv_obj_t * now_temp;
 static lv_obj_t * now_summary;
 static lv_obj_t * now_range;
 static lv_obj_t * now_location;
+static lv_obj_t * now_updated;
 static lv_obj_t * now_stats[STAT_COUNT];
+static lv_obj_t * moon_icon;
+static lv_obj_t * moon_lit;
+static lv_obj_t * moon_trend;
+static lv_obj_t * moon_new;
+static lv_obj_t * refresh;
+static lv_obj_t * status;
+
+static page_weather_refresh_cb_t refresh_cb;
 
 static struct {
     lv_obj_t * root;
@@ -160,16 +139,11 @@ const ui_page_t * page_weather_desc(void)
     return &desc;
 }
 
-void page_weather_set_location(const char * location, const char * updated)
+void page_weather_set_location(const char * location, const char * updated, bool stale)
 {
-    if(!location) location = "";
-
-    if(updated && updated[0]) {
-        lv_label_set_text_fmt(now_location, "%s  " UI_BULLET "  %s", location, updated);
-    }
-    else {
-        lv_label_set_text(now_location, location);
-    }
+    lv_label_set_text(now_location, location ? location : "");
+    lv_label_set_text(now_updated, updated ? updated : "");
+    lv_obj_set_style_text_color(now_updated, stale ? UI_COLOR_WARN : UI_COLOR_TEXT_DIM, LV_PART_MAIN);
 }
 
 void page_weather_set_now(const page_weather_now_t * now)
@@ -239,6 +213,40 @@ void page_weather_set_daily(const page_weather_day_t days[], uint32_t count)
     }
 }
 
+void page_weather_set_moon(const page_weather_moon_t * moon)
+{
+    if(!moon) return;
+
+    bool known = moon->illumination >= 0;
+
+    ui_moon_icon_set(moon_icon, moon->age, moon->southern);
+    lv_obj_set_hidden(moon_icon, !known);
+    lv_obj_set_hidden(moon_trend, !known);
+
+    if(known) lv_label_set_text_fmt(moon_lit, "%d%% Lit", (int)moon->illumination);
+    else      lv_label_set_text(moon_lit, "--");
+
+    lv_label_set_text(moon_trend, moon->waxing ? LV_SYMBOL_UP : LV_SYMBOL_DOWN);
+    lv_obj_set_style_text_color(moon_trend, moon->waxing ? UI_COLOR_GOOD : UI_COLOR_BAD, LV_PART_MAIN);
+
+    lv_label_set_text(moon_new, moon->new_moon ? moon->new_moon : "--");
+}
+
+void page_weather_set_state(ui_status_state_t state, const char * message)
+{
+    ui_status_set(status, state, message);
+}
+
+void page_weather_set_refreshing(bool refreshing)
+{
+    ui_refresh_set_busy(refresh, refreshing);
+}
+
+void page_weather_set_refresh_cb(page_weather_refresh_cb_t cb)
+{
+    refresh_cb = cb;
+}
+
 /**********************
  *   STATIC FUNCTIONS
  **********************/
@@ -261,49 +269,24 @@ static lv_obj_t * create(lv_obj_t * parent)
     hourly_card_create(root);
     daily_card_create(root);
 
-    /* TODO: the weather service replaces these with the real forecast, and
-     * calls them again whenever it refreshes. */
-    /*Times go through ui_format, as the service's must, so the samples follow
-     *the clock setting. The page copies every string.*/
-    page_weather_now_t  now = now_defaults;
-    page_weather_hour_t strip[PAGE_WEATHER_HOURS];
-    char                sunrise[12], sunset[12], stamp[12], updated[24];
-    char                hours[PAGE_WEATHER_HOURS][12];
-
-    ui_format_time(sunrise, sizeof(sunrise), 7, 4);
-    ui_format_time(sunset, sizeof(sunset), 19, 31);
-    now.sunrise = sunrise;
-    now.sunset  = sunset;
-
-    ui_format_time(stamp, sizeof(stamp), 10, 15);
-    lv_snprintf(updated, sizeof(updated), "Updated %s", stamp);
-
-    for(uint32_t i = 0; i < PAGE_WEATHER_HOURS; i++) {
-        ui_format_hour(hours[i], sizeof(hours[i]), hour_defaults[i].hour);
-        strip[i].when        = hours[i];
-        strip[i].condition   = hour_defaults[i].condition;
-        strip[i].temp        = hour_defaults[i].temp;
-        strip[i].rain_chance = hour_defaults[i].rain_chance;
-    }
-
-    page_weather_set_location("Athens", updated);
-    page_weather_set_now(&now);
-    page_weather_set_hourly(strip, PAGE_WEATHER_HOURS);
-    page_weather_set_daily(day_defaults, PAGE_WEATHER_DAYS);
+    /*The whole page, until the weather feed has a forecast for it.*/
+    status = ui_status_create(root, UI_COLOR_BG, refresh_clicked, NULL);
 
     return root;
 }
 
 static void now_card_create(lv_obj_t * parent)
 {
-    static const int32_t stat_cols[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+    /*Four readouts to a row, in columns of equal width.*/
+    static const int32_t stat_cols[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1),
+                                        LV_GRID_TEMPLATE_LAST};
     static const int32_t stat_rows[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
 
     lv_obj_t * card = ui_card_create(parent);
     lv_obj_set_grid_cell(card, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 0, 1);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(card, UI_GAP * 2, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(card, NOW_GAP, LV_PART_MAIN);
 
     /*Headline: the icon and temperature, large enough to read across a room.*/
     now_icon = ui_weather_icon_create(card, NOW_ICON_SIZE, UI_WEATHER_CLEAR);
@@ -316,7 +299,7 @@ static void now_card_create(lv_obj_t * parent)
 
     now_summary = ui_label_create(summary, "", UI_FONT_MD, UI_COLOR_TEXT);
     lv_obj_set_width(now_summary, LV_PCT(100));
-    ui_label_single_line(now_summary, UI_FONT_MD);
+    lv_label_set_long_mode(now_summary, LV_LABEL_LONG_MODE_WRAP);
 
     now_range = ui_label_create(summary, "", UI_FONT_SM, UI_COLOR_TEXT_DIM);
 
@@ -335,23 +318,72 @@ static void now_card_create(lv_obj_t * parent)
 
     lv_obj_t * stats = box_create(card);
     lv_obj_set_flex_grow(stats, 1);
+    /*Clear of the freshness line in the corner above.*/
+    lv_obj_set_style_margin_top(stats, lv_font_get_line_height(UI_FONT_XS) + UI_GAP / 2, LV_PART_MAIN);
     lv_obj_set_style_pad_row(stats, UI_GAP, LV_PART_MAIN);
-    lv_obj_set_style_pad_column(stats, UI_GAP, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(stats, NOW_STAT_GAP, LV_PART_MAIN);
+    /*A long reading in the last column may run on into the card's padding
+     *rather than be cut off.*/
+    lv_obj_set_overflow_visible(stats, true);
     lv_obj_set_grid_dsc_array(stats, stat_cols, stat_rows);
 
+    /*Feels like, humidity, rain and wind across the top; sunrise and sunset
+     *under the first two.*/
     for(uint32_t i = 0; i < STAT_COUNT; i++) {
-        lv_obj_t * stat = box_create(stats);
-        lv_obj_set_grid_cell(stat, LV_GRID_ALIGN_STRETCH, i % 3, 1, LV_GRID_ALIGN_START, i / 3, 1);
-        lv_obj_set_flex_flow(stat, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_style_pad_row(stat, 2, LV_PART_MAIN);
-
-        lv_obj_t * caption = ui_label_create(stat, stat_captions[i], UI_FONT_XS, UI_COLOR_TEXT_DIM);
-        lv_obj_set_style_text_letter_space(caption, 1, LV_PART_MAIN);
-
-        now_stats[i] = ui_label_create(stat, "--", UI_FONT_MD, UI_COLOR_TEXT);
-        lv_obj_set_width(now_stats[i], LV_PCT(100));
-        ui_label_single_line(now_stats[i], UI_FONT_MD);
+        stat_create(stats, i < 4 ? i : i - 4, i < 4 ? 0 : 1, stat_captions[i], &now_stats[i]);
     }
+
+    /*The moon under the rain: drawn as it looks, how much of it is lit, and an
+     *arrow for whether that grows or shrinks in the days ahead. Then the next
+     *new moon under the wind.*/
+    lv_obj_t * moon = box_create(stats);
+    lv_obj_set_grid_cell(moon, LV_GRID_ALIGN_START, 2, 1, LV_GRID_ALIGN_START, 1, 1);
+    lv_obj_set_flex_flow(moon, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(moon, 2, LV_PART_MAIN);
+
+    lv_obj_t * caption = ui_label_create(moon, "MOON PHASE", UI_FONT_XS, UI_COLOR_TEXT_DIM);
+    lv_obj_set_style_text_letter_space(caption, 1, LV_PART_MAIN);
+
+    lv_obj_t * reading = box_create(moon);
+    lv_obj_set_flex_flow(reading, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(reading, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(reading, 4, LV_PART_MAIN);
+
+    moon_icon  = ui_moon_icon_create(reading, MOON_ICON_SIZE);
+    moon_lit   = ui_label_create(reading, "--", UI_FONT_MD, UI_COLOR_TEXT);
+    moon_trend = ui_label_create(reading, LV_SYMBOL_UP, UI_FONT_MD, UI_COLOR_GOOD);
+    lv_obj_set_hidden(moon_icon, true);
+    lv_obj_set_hidden(moon_trend, true);
+
+    stat_create(stats, 3, 1, "NEW MOON", &moon_new);
+
+    /*How fresh the forecast is, and a way to fetch it again, in the top right corner.*/
+    lv_obj_t * corner = box_create(card);
+    lv_obj_set_floating(corner, true);
+    lv_obj_set_flex_flow(corner, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(corner, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(corner, 8, LV_PART_MAIN);
+    lv_obj_align(corner, LV_ALIGN_TOP_RIGHT, 0, 0);
+
+    now_updated = ui_label_create(corner, "", UI_FONT_XS, UI_COLOR_TEXT_DIM);
+    refresh     = ui_refresh_create(corner, refresh_clicked, NULL);
+}
+
+/**
+ * A captioned readout in the current-conditions grid, as wide as its contents.
+ * @param value   receives the value's label
+ */
+static void stat_create(lv_obj_t * grid, uint32_t col, uint32_t row, const char * caption, lv_obj_t ** value)
+{
+    lv_obj_t * stat = box_create(grid);
+    lv_obj_set_grid_cell(stat, LV_GRID_ALIGN_START, col, 1, LV_GRID_ALIGN_START, row, 1);
+    lv_obj_set_flex_flow(stat, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(stat, 2, LV_PART_MAIN);
+
+    lv_obj_t * label = ui_label_create(stat, caption, UI_FONT_XS, UI_COLOR_TEXT_DIM);
+    lv_obj_set_style_text_letter_space(label, 1, LV_PART_MAIN);
+
+    *value = ui_label_create(stat, "--", UI_FONT_MD, UI_COLOR_TEXT);
 }
 
 static void hourly_card_create(lv_obj_t * parent)
@@ -474,4 +506,10 @@ static void rain_label_set(lv_obj_t * label, int32_t chance)
     lv_label_set_text_fmt(label, LV_SYMBOL_TINT " %d%%", (int)chance);
     lv_obj_set_style_text_color(label, chance >= RAIN_NOTABLE_PERCENT ? UI_COLOR_RAIN : UI_COLOR_TEXT_DIM,
                                 LV_PART_MAIN);
+}
+
+static void refresh_clicked(lv_event_t * e)
+{
+    LV_UNUSED(e);
+    if(refresh_cb) refresh_cb();
 }

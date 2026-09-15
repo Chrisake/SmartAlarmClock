@@ -19,6 +19,7 @@
 static void read_string(const cJSON * obj, const char * key, char * dst, size_t size);
 static void read_bool(const cJSON * obj, const char * key, bool * dst);
 static bool read_int(const cJSON * obj, const char * key, int min, int max, int * out);
+static bool read_double(const cJSON * obj, const char * key, double min, double max, double * out);
 
 /**********************
  *  STATIC VARIABLES
@@ -60,6 +61,16 @@ void settings_defaults(settings_t * s)
 
     strcpy(s->language, "en");
     s->fahrenheit = false;
+
+    s->location_auto = true;
+
+    s->alarm_snooze_minutes = 9;
+    s->alarm_volume         = 80;
+    s->alarm_ramp_seconds   = 30;
+
+    s->sensor_interval  = 60;
+    strcpy(s->sensor_topic, "smartclock/sensors");
+    s->sensor_discovery = true;
 }
 
 bool settings_from_json(const char * json, size_t len, settings_t * out)
@@ -124,6 +135,27 @@ bool settings_from_json(const char * json, size_t len, settings_t * out)
         if(strcmp(format->valuestring, date_format_names[i]) == 0) out->date_format = (settings_date_format_t)i;
     }
 
+    double number;
+
+    const cJSON * location = cJSON_GetObjectItemCaseSensitive(root, "location");
+    read_bool(location, "auto", &out->location_auto);
+    read_string(location, "name", out->location_name, sizeof(out->location_name));
+    if(read_double(location, "latitude", -90.0, 90.0, &number))    out->latitude = number;
+    if(read_double(location, "longitude", -180.0, 180.0, &number)) out->longitude = number;
+
+    const cJSON * alarms = cJSON_GetObjectItemCaseSensitive(root, "alarms");
+    if(read_int(alarms, "snooze_minutes", 1, 30, &value)) out->alarm_snooze_minutes = (uint8_t)value;
+    if(read_int(alarms, "volume", 10, 100, &value))       out->alarm_volume = (uint8_t)value;
+    if(read_int(alarms, "ramp_seconds", 0, 300, &value))  out->alarm_ramp_seconds = (uint16_t)value;
+
+    const cJSON * sensors = cJSON_GetObjectItemCaseSensitive(root, "sensors");
+    if(read_int(sensors, "publish_interval", 10, 3600, &value)) out->sensor_interval = (uint16_t)value;
+    if(read_double(sensors, "temperature_offset", -10.0, 10.0, &number)) {
+        out->sensor_temp_offset = (int16_t)(number * 10.0 + (number < 0 ? -0.5 : 0.5));
+    }
+    read_string(sensors, "topic", out->sensor_topic, sizeof(out->sensor_topic));
+    read_bool(sensors, "discovery", &out->sensor_discovery);
+
     cJSON_Delete(root);
     return true;
 }
@@ -169,6 +201,23 @@ char * settings_to_json(const settings_t * s)
     cJSON * general = cJSON_AddObjectToObject(root, "general");
     cJSON_AddStringToObject(general, "language", s->language);
     cJSON_AddBoolToObject(general, "fahrenheit", s->fahrenheit);
+
+    cJSON * location = cJSON_AddObjectToObject(root, "location");
+    cJSON_AddBoolToObject(location, "auto", s->location_auto);
+    cJSON_AddStringToObject(location, "name", s->location_name);
+    cJSON_AddNumberToObject(location, "latitude", s->latitude);
+    cJSON_AddNumberToObject(location, "longitude", s->longitude);
+
+    cJSON * alarms = cJSON_AddObjectToObject(root, "alarms");
+    cJSON_AddNumberToObject(alarms, "snooze_minutes", s->alarm_snooze_minutes);
+    cJSON_AddNumberToObject(alarms, "volume", s->alarm_volume);
+    cJSON_AddNumberToObject(alarms, "ramp_seconds", s->alarm_ramp_seconds);
+
+    cJSON * sensors = cJSON_AddObjectToObject(root, "sensors");
+    cJSON_AddNumberToObject(sensors, "publish_interval", s->sensor_interval);
+    cJSON_AddNumberToObject(sensors, "temperature_offset", s->sensor_temp_offset / 10.0);
+    cJSON_AddStringToObject(sensors, "topic", s->sensor_topic);
+    cJSON_AddBoolToObject(sensors, "discovery", s->sensor_discovery);
 
     char * text = cJSON_Print(root);
     cJSON_Delete(root);
@@ -218,5 +267,13 @@ static bool read_int(const cJSON * obj, const char * key, int min, int max, int 
     const cJSON * item = obj ? cJSON_GetObjectItemCaseSensitive(obj, key) : NULL;
     if(!cJSON_IsNumber(item) || item->valuedouble < min || item->valuedouble > max) return false;
     *out = item->valueint;
+    return true;
+}
+
+static bool read_double(const cJSON * obj, const char * key, double min, double max, double * out)
+{
+    const cJSON * item = obj ? cJSON_GetObjectItemCaseSensitive(obj, key) : NULL;
+    if(!cJSON_IsNumber(item) || item->valuedouble < min || item->valuedouble > max) return false;
+    *out = item->valuedouble;
     return true;
 }

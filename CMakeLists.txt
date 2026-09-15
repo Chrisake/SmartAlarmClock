@@ -88,15 +88,17 @@ target_include_directories(lvgl PUBLIC
 file(GLOB_RECURSE UI_SOURCES CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/ui/*.c")
 
 # Smart home device model, configuration and state, the device's own
-# settings, threads, the HTTP client, the saved radio stations and the stream
-# player: plain C, no LVGL.
+# settings, threads, the HTTP and MQTT clients, the saved radio stations, the
+# stream and tone players, the sensors and the forecasts: plain C, no LVGL.
 file(GLOB_RECURSE DEVICE_SOURCES CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/src/devices/*.c"
     "${PROJECT_SOURCE_DIR}/src/settings/*.c"
     "${PROJECT_SOURCE_DIR}/src/os/*.c"
     "${PROJECT_SOURCE_DIR}/src/net/*.c"
     "${PROJECT_SOURCE_DIR}/src/radio/*.c"
-    "${PROJECT_SOURCE_DIR}/src/audio/*.c")
+    "${PROJECT_SOURCE_DIR}/src/audio/*.c"
+    "${PROJECT_SOURCE_DIR}/src/sensors/*.c"
+    "${PROJECT_SOURCE_DIR}/src/weather/*.c")
 if(MSVC)
     # Portable C that also builds with ESP-IDF's GCC; MSVC's _s replacements
     # do not exist there.

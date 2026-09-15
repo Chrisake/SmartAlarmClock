@@ -14,5 +14,8 @@ bin/
 # Simulator settings, written by the Settings page; holds Wi-Fi and MQTT passwords
 data/settings.json
 
-# Simulator SD card: the saved radio stations and their favicons
+# Simulator SD card: the saved radio stations and their favicons, and the sensor history
 data/sdcard/
+
+# Simulator alarms, written by the alarm feed
+data/alarms.json

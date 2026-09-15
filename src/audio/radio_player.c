@@ -22,6 +22,7 @@
 #include "net/http_stream.h"
 #include "os/os_port.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,6 +48,13 @@
 
 /** Decoded samples a frame can produce: HE-AAC doubles AAC's 1024 per channel, in stereo. */
 #define PCM_SAMPLES 4096
+
+/**
+ * What must follow an MP3 frame in the window before it is decoded: the
+ * largest frame minimp3 takes (free format, 2304 bytes), then the next frame's
+ * 4-byte header. See decode().
+ */
+#define MP3_LOOKAHEAD_BYTES (2304 + 4)
 
 /** How much the sink is let hold before the decoder waits, and how much is written at once. */
 #define QUEUE_MS      250
@@ -157,6 +165,7 @@ static bool   ring_write(session_t * s, const uint8_t * data, size_t len);
 static size_t ring_wait(session_t * s, size_t bytes);
 static size_t ring_read(session_t * s, uint8_t * out, size_t max);
 static bool   ring_empty(session_t * s);
+static bool   ring_finished(session_t * s);
 static void   ring_close(session_t * s);
 
 static void status_set(session_t * s, radio_player_state_t state, const char * error);
@@ -177,7 +186,7 @@ static bool ts_packet(session_t * s, ts_t * ts, const uint8_t * p);
 static void ts_table(session_t * s, ts_t * ts, int pid, const uint8_t * payload, size_t len);
 
 static void     decoder_main(void * arg);
-static bool     decode(session_t * s, decoder_t * d, bool * played);
+static bool     decode(session_t * s, decoder_t * d, bool finished, bool * played);
 static bool     decoder_pick(session_t * s, decoder_t * d);
 static format_t sniff(const uint8_t * p, size_t len);
 static bool     output(session_t * s, decoder_t * d, const int16_t * pcm, size_t frames, uint32_t rate,
@@ -449,6 +458,15 @@ static bool ring_empty(session_t * s)
     return empty;
 }
 
+/** @return   true once the reader has finished and everything it wrote has been read */
+static bool ring_finished(session_t * s)
+{
+    os_mutex_lock(s->lock);
+    bool finished = s->ring.closed && s->ring.used == 0;
+    os_mutex_unlock(s->lock);
+    return finished;
+}
+
 static void ring_close(session_t * s)
 {
     os_mutex_lock(s->lock);
@@ -590,6 +608,15 @@ static void icy_title(session_t * s, const char * meta)
 
     const char * end = strstr(start, "';");
     if(!end) end = start + strlen(start);
+
+    /*Trimmed, and nothing at all when there are no words in it: " - " is what
+     *many servers send for an empty artist and title.*/
+    while(start < end && isspace((unsigned char)*start)) start++;
+    while(end > start && isspace((unsigned char)end[-1])) end--;
+
+    bool words = false;
+    for(const char * c = start; c < end && !words; c++) words = *c != '-' && !isspace((unsigned char)*c);
+    if(!words) end = start;
 
     char   title[RADIO_PLAYER_TITLE_LEN];
     size_t len = (size_t)(end - start);
@@ -940,7 +967,7 @@ static void decoder_main(void * arg)
         d->in_len += ring_read(s, d->in + d->in_len, sizeof(d->in) - d->in_len);
 
         bool played = false;
-        if(!decode(s, d, &played)) break;
+        if(!decode(s, d, ring_finished(s), &played)) break;
         if(played) playing = true;
     }
 
@@ -958,10 +985,11 @@ done:
 /**
  * Decode every whole frame in the input window and play it, keeping any
  * partial frame for next time.
- * @param played   set if any audio reached the sink
- * @return         false to give up on the stream
+ * @param finished   nothing more will arrive: decode to the very end
+ * @param played     set if any audio reached the sink
+ * @return           false to give up on the stream
  */
-static bool decode(session_t * s, decoder_t * d, bool * played)
+static bool decode(session_t * s, decoder_t * d, bool finished, bool * played)
 {
     size_t pos = 0;
 
@@ -979,6 +1007,15 @@ static bool decode(session_t * s, decoder_t * d, bool * played)
         int    rate     = 0;
 
         if(d->format == FORMAT_MP3) {
+            /*minimp3 carries its state from frame to frame -- the bit
+             *reservoir a frame borrows from the ones before it, the overlap
+             *that joins them -- only when the next frame's header follows the
+             *frame it decodes. Without it, it starts afresh, and the frame
+             *comes out wrong or not at all: the window ends mid-stream all the
+             *time, and streams broke up into distortion. So leave the last
+             *frames for when more has arrived.*/
+            if(left < MP3_LOOKAHEAD_BYTES && !finished) break;
+
             mp3dec_frame_info_t info;
             frames = mp3dec_decode_frame(&d->mp3, d->in + pos, (int)left, d->pcm, &info);
             if(info.frame_bytes == 0) break;  /*Needs more data.*/

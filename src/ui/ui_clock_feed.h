@@ -3,16 +3,15 @@
  *
  * Drives the clock page from the real time and the alarm list.
  *
- * This is the one place that reads the clock, so it owns everything that has
- * to change as time passes: the time and date on the home page, and which
- * alarm is shown as the next to ring. It recomputes the next alarm on every
- * minute boundary and whenever the alarms page reports an edit.
+ * It owns what the home page shows changing as time passes: the time and
+ * date, and which alarm is shown as the next to ring -- or the one snoozed. It
+ * recomputes the next alarm on every minute boundary, and whenever
+ * ui_alarm_feed says the alarms or a snooze changed.
  *
  * It is deliberately separate from the pages, which stay views: the feed reads
  * the alarm list through the alarms page's public getter and pushes the result
- * into the clock page through its setters. When a real application layer
- * arrives -- with persistence, an NTP client and something that actually
- * sounds the alarm -- this is the seam it replaces.
+ * into the clock page through its setters. Keeping the alarms and ringing them
+ * is ui_alarm_feed's job.
  */
 
 #ifndef UI_CLOCK_FEED_H

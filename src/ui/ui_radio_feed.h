@@ -18,6 +18,9 @@
  * Playing goes through audio/radio_player.h, the same code in the simulator
  * as on the clock. What it is doing, and the stream's track titles, are polled
  * onto the page.
+ *
+ * The saved stations are also offered to the alarm editor, and an alarm plays
+ * one through here.
  */
 
 #ifndef UI_RADIO_FEED_H
@@ -49,6 +52,20 @@ void ui_radio_feed_init(void);
  * which builds the page afresh.
  */
 void ui_radio_feed_republish(void);
+
+/**
+ * Play a saved station, as if it had been picked on the radio page: for an
+ * alarm. How it goes is read with radio_player_get_status().
+ * @param uuid   the station's UUID
+ * @return       false if it is not saved, or its details have not arrived yet
+ */
+bool ui_radio_feed_play_station(const char * uuid);
+
+/** Stop the radio, as the page's stop button does. */
+void ui_radio_feed_stop(void);
+
+/** @return   the radio's volume, percent: what the output returns to after an alarm */
+int32_t ui_radio_feed_get_volume(void);
 
 #ifdef __cplusplus
 } /*extern "C"*/

@@ -29,7 +29,7 @@ extern "C" {
 typedef enum {
     UI_PAGE_CLOCK,        /**< Home: time, date, weather, calendar, air summary */
     UI_PAGE_ALARMS,       /**< Alarm list and editor */
-    UI_PAGE_WEATHER,      /**< Current conditions, next 24 hours, next 7 days */
+    UI_PAGE_WEATHER,      /**< Current conditions, next 20 hours, next 7 days */
     UI_PAGE_AIR_QUALITY,  /**< Sensor history, analysis and forecast */
     UI_PAGE_RADIO,        /**< Internet radio: stations, transport, volume */
     UI_PAGE_SMART_HOME,   /**< Devices: MQTT device tiles, rooms and scenes */

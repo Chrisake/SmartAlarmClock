@@ -61,6 +61,8 @@ static void editor_close(void);
 static void editor_load(const page_alarm_t * alarm);
 static void editor_store(page_alarm_t * alarm);
 static void alarms_changed(void);
+static void sound_options_refresh(void);
+static void sound_select(uint8_t tone, const char * station);
 
 static lv_obj_t * flow_create(lv_obj_t * parent, lv_flex_flow_t flow);
 static lv_obj_t * field_create(lv_obj_t * parent, const char * caption);
@@ -107,6 +109,16 @@ static page_alarm_t alarms[PAGE_ALARMS_MAX];
 static uint32_t     alarm_count;
 
 static page_alarms_changed_cb_t changed_cb;
+
+/*The stations the sound menu offers after the tones.*/
+static struct {
+    char uuid[PAGE_ALARMS_STATION_LEN];
+    char name[PAGE_ALARMS_STATION_NAME_LEN];
+} stations[PAGE_ALARMS_STATIONS_MAX];
+static uint32_t station_count;
+
+/*The tone of the alarm in the editor, kept to fall back on when a station is picked.*/
+static uint8_t editor_tone;
 
 /*Which alarm the editor is working on, or EDITING_NONE for a new one.*/
 static uint32_t editing;
@@ -189,6 +201,49 @@ const char * page_alarms_tone_name(uint8_t tone)
 {
     if(tone >= PAGE_ALARM_TONE_COUNT) tone = 0;
     return tone_names[tone];
+}
+
+void page_alarms_set_stations(const page_alarm_station_t list[], uint32_t count)
+{
+    if(count > PAGE_ALARMS_STATIONS_MAX) count = PAGE_ALARMS_STATIONS_MAX;
+
+    /*What an open editor has picked, to pick again from the new menu.*/
+    char    picked[PAGE_ALARMS_STATION_LEN] = "";
+    uint8_t tone                            = editor_tone;
+
+    if(tone_field) {
+        uint32_t sound = lv_dropdown_get_selected(tone_field);
+        if(sound < PAGE_ALARM_TONE_COUNT) tone = (uint8_t)sound;
+        else if(sound - PAGE_ALARM_TONE_COUNT < station_count) {
+            lv_strlcpy(picked, stations[sound - PAGE_ALARM_TONE_COUNT].uuid, sizeof(picked));
+        }
+    }
+
+    for(uint32_t i = 0; i < count; i++) {
+        lv_strlcpy(stations[i].uuid, list[i].uuid ? list[i].uuid : "", sizeof(stations[i].uuid));
+        lv_strlcpy(stations[i].name, list[i].name ? list[i].name : "", sizeof(stations[i].name));
+
+        /*A line break would split the menu entry in two.*/
+        for(char * c = stations[i].name; *c; c++) {
+            if(*c == '\n' || *c == '\r') *c = ' ';
+        }
+    }
+    station_count = count;
+
+    if(!tone_field) return;
+
+    uint8_t fallback = editor_tone;
+    sound_options_refresh();
+    sound_select(tone, picked);
+    editor_tone = fallback;
+}
+
+const char * page_alarms_station_name(const char * uuid)
+{
+    for(uint32_t i = 0; uuid && uuid[0] && i < station_count; i++) {
+        if(strcmp(stations[i].uuid, uuid) == 0) return stations[i].name;
+    }
+    return NULL;
 }
 
 /**********************
@@ -477,11 +532,10 @@ static void editor_view_create(lv_obj_t * parent)
 
     tone_field = lv_dropdown_create(tone_slot);
     lv_obj_set_width(tone_field, LV_PCT(100));
-    lv_dropdown_set_options_static(tone_field,
-                                   "Radar\nChimes\nBeacon\nSignal\nBirdsong");
     lv_obj_set_style_bg_color(tone_field, UI_COLOR_CARD_ALT, LV_PART_MAIN);
     lv_obj_set_style_border_width(tone_field, 0, LV_PART_MAIN);
     lv_obj_set_style_text_font(tone_field, UI_FONT_SM, LV_PART_MAIN);
+    sound_options_refresh();
 
     lv_obj_t * snooze_slot = field_create(extras, "SNOOZE");
 
@@ -606,7 +660,7 @@ static void editor_load(const page_alarm_t * alarm)
     lv_roller_set_selected(meridiem_roller, alarm->hour < 12 ? 0 : 1, LV_ANIM_OFF);
 
     lv_textarea_set_text(name_field, alarm->name);
-    lv_dropdown_set_selected(tone_field, alarm->tone);
+    sound_select(alarm->tone, alarm->station);
 
     if(alarm->snooze) lv_obj_add_state(snooze_switch, LV_STATE_CHECKED);
     else              lv_obj_remove_state(snooze_switch, LV_STATE_CHECKED);
@@ -627,8 +681,18 @@ static void editor_store(page_alarm_t * alarm)
     if(ui_format_24h()) alarm->hour = (uint8_t)hour;
     else                alarm->hour = (uint8_t)((hour % 12) + (pm ? 12 : 0));
     alarm->minute = (uint8_t)lv_roller_get_selected(minute_roller);
-    alarm->tone   = (uint8_t)lv_dropdown_get_selected(tone_field);
     alarm->snooze = lv_obj_has_state(snooze_switch, LV_STATE_CHECKED);
+
+    uint32_t sound = lv_dropdown_get_selected(tone_field);
+    if(sound < PAGE_ALARM_TONE_COUNT) {
+        alarm->tone       = (uint8_t)sound;
+        alarm->station[0] = '\0';
+    }
+    else if(sound - PAGE_ALARM_TONE_COUNT < station_count) {
+        /*A station keeps the alarm's tone, to fall back on.*/
+        alarm->tone = editor_tone;
+        lv_strlcpy(alarm->station, stations[sound - PAGE_ALARM_TONE_COUNT].uuid, sizeof(alarm->station));
+    }
 
     lv_strlcpy(alarm->name, lv_textarea_get_text(name_field), sizeof(alarm->name));
 
@@ -744,4 +808,38 @@ static void keyboard_done(lv_event_t * e)
 {
     LV_UNUSED(e);
     lv_obj_set_hidden(keyboard, true);
+}
+
+/** Fill the sound menu: the tones, then the saved stations. */
+static void sound_options_refresh(void)
+{
+    if(!tone_field) return;
+
+    char   options[PAGE_ALARM_TONE_COUNT * 24 + PAGE_ALARMS_STATIONS_MAX * (PAGE_ALARMS_STATION_NAME_LEN + 8)];
+    size_t used = 0;
+
+    for(uint32_t i = 0; i < PAGE_ALARM_TONE_COUNT && used < sizeof(options); i++) {
+        used += (size_t)lv_snprintf(options + used, sizeof(options) - used, "%s" LV_SYMBOL_BELL "  %s",
+                                    i ? "\n" : "", tone_names[i]);
+    }
+    for(uint32_t i = 0; i < station_count && used < sizeof(options); i++) {
+        used += (size_t)lv_snprintf(options + used, sizeof(options) - used, "\n" LV_SYMBOL_AUDIO "  %s",
+                                    stations[i].name);
+    }
+
+    lv_dropdown_set_options(tone_field, options);
+}
+
+/** Pick a sound in the menu: the station if it is still saved, else the tone. */
+static void sound_select(uint8_t tone, const char * station)
+{
+    uint32_t index = tone < PAGE_ALARM_TONE_COUNT ? tone : 0;
+
+    editor_tone = (uint8_t)index;
+
+    for(uint32_t i = 0; station && station[0] && i < station_count; i++) {
+        if(strcmp(stations[i].uuid, station) == 0) index = PAGE_ALARM_TONE_COUNT + i;
+    }
+
+    lv_dropdown_set_selected(tone_field, index);
 }

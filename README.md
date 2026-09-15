@@ -166,14 +166,17 @@ src/ui/
   ui_page.h                   the contract every page implements
   ui_theme.h / ui_theme.c     colour, type and spacing tokens + widget factories
   ui_weather_icon.h / .c      weather condition icons drawn from plain objects
+  ui_moon_icon.h / .c         the moon's phase, drawn the same way
   ui_format.h / .c            every time and date on screen, as the settings ask
   ui_picker.h / .c            iOS-style wheel picker (effects, date, time)
+  ui_status.h / .c            loading and error covers, refresh control, notices
+  ui_alarm_screen.h / .c      the screen shown while an alarm rings
   pages/
     clock/page_clock.*        ambient clock face + time, date, conditions
                               and MinuteCast precipitation graph, colour-coded
                               calendar events, air summary
     alarms/page_alarms.*      alarm list and editor, iOS-style
-    weather/page_weather.*    current conditions, next 24 hours in 4-hour
+    weather/page_weather.*    current conditions, next 20 hours in 2-hour
                               steps, 7-day forecast with low/high range bars
     air_quality/page_air_quality.*
                               metric tiles, history chart with 1h/24h/7d,
@@ -191,6 +194,12 @@ src/ui/
                               the stream player
   ui_settings_feed.h / .c     loads, stores and applies settings; simulated
                               Wi-Fi radio and broker connection
+  ui_alarm_feed.h / .c        stores the alarms and rings them: screen, tone or
+                              station, volume ramp, snooze
+  ui_weather_feed.h / .c      Open-Meteo forecasts -> weather page, clock page
+                              and the air quality forecast
+  ui_air_feed.h / .c          sensors and outdoor air -> air quality page and
+                              clock page; readings to MQTT
 src/devices/                  device model, JSON configuration, MQTT state hub
                               (plain C, no LVGL)
 src/settings/                 device settings model, JSON load/save, and
@@ -198,12 +207,20 @@ src/settings/                 device settings model, JSON load/save, and
 src/os/                       mutex, condition variable, thread, sleep:
                               Win32 or POSIX (plain C, no LVGL)
 src/net/                      HTTP streams (WinHTTP / esp_http_client), GET,
-                              and the background download worker
+                              the background download worker, and the MQTT
+                              client seam
 src/radio/                    Radio Browser station records, SD card layout,
                               favicon conversion (plain C, no LVGL)
-src/audio/                    radio_player: stream, decoder and output; and
+src/audio/                    radio_player: stream, decoder and output;
+                              tone_player: the synthesised alarm tones; and
                               audio_sink: SDL2 in the simulator, the ES8311
                               codec on the board (plain C, no LVGL)
+src/sensors/                  SEN69C and SHT45 readings (I2C on the board, made
+                              up in the simulator), the sampler thread, hour,
+                              day and week history, US AQI (plain C, no LVGL)
+src/weather/                  Open-Meteo forecast and air quality requests and
+                              answers with the moon's phase, IP location
+                              (plain C, no LVGL)
 data/devices.json             example device configuration, read by the simulator
 third_party/cjson/            cJSON 1.7.18 (MIT), same parser ESP-IDF ships
 third_party/stb/              stb_image 2.30 (public domain), reads favicons
@@ -259,17 +276,17 @@ Two details worth knowing if you change that layout:
 
 ### The clock feed
 
-`ui_clock_feed` is the one place that reads the wall clock, and the only piece
-here that is really application logic rather than UI. It runs a one-second
-timer and:
+`ui_clock_feed` keeps the home page's clock and alarm chip current. It runs a
+one-second timer and:
 
 - pushes the time every second and the date on each minute boundary;
 - recomputes which alarm rings next on each minute boundary, and immediately
-  whenever the alarms page reports an edit.
+  whenever `ui_alarm_feed` reports that the alarms, or a snooze, changed.
 
 The next alarm is whichever enabled alarm has the fewest minutes until it
 fires, walking a week ahead for repeating ones. `when` comes out as "Today",
-"Tomorrow", or "on <weekday>".
+"Tomorrow", or "on <weekday>". A snoozed alarm takes the chip instead, as
+"Snoozed" with the time it rings again.
 
 Two details that are easy to get wrong: `tm_wday` counts from Sunday while
 `page_alarm_days_t` counts from Monday, so the index is rotated at both ends of
@@ -277,8 +294,7 @@ the calculation; and `localtime()` returns a shared buffer with a different
 reentrant spelling per toolchain, so `local_now()` wraps `localtime_s` and
 `localtime_r`.
 
-This is the seam a real application layer replaces, once there is NTP, storage
-and something that actually sounds the alarm.
+Keeping the alarms and ringing them is `ui_alarm_feed`'s job; see Alarms.
 
 ### Dividers and the precipitation band
 
@@ -360,10 +376,16 @@ when an alarm's time is edited. The array index is how a card identifies its
 alarm and never appears on screen; anything holding one has to be finished with
 it before the next sort.
 
-The page owns the alarms while the device has nowhere to persist them. When
-you add storage, load with `page_alarms_set_alarms()` and save from the
-callback registered with `page_alarms_set_changed_cb()`, which fires on every
-add, edit, delete and toggle.
+The page only edits the list. `ui_alarm_feed` loads it at start with
+`page_alarms_set_alarms()` and stores it from the callback registered with
+`page_alarms_set_changed_cb()`, which fires on every add, edit, delete and
+toggle -- in the simulator to `data/alarms.json`, with the days, tone and
+station spelled out so the file can be edited by hand.
+
+The SOUND menu lists the five tones, then the saved radio stations, which the
+radio feed hands over with `page_alarms_set_stations()` whenever its list
+changes. An alarm set to a station keeps its tone to fall back on; one whose
+station has since been removed opens in the editor as that tone.
 
 Working out *which* alarm rings next needs a clock and a calendar, and the page
 has neither. `ui_clock_feed` does it -- see below -- and pushes the answer to
@@ -373,14 +395,43 @@ Tapping the chip on the clock page opens the alarms page, but only once the
 page is awake: while ambient the chip is part of the idle face, so touching it
 wakes the page like touching anywhere else rather than navigating.
 
+#### Ringing
+
+`ui_alarm_feed` looks at the clock four times a second and rings an enabled
+alarm when its minute comes round on one of its days. One with no days rings at
+the next occurrence of its time and then switches itself off.
+
+Ringing puts `ui_alarm_screen` up on the top layer, over the navigation rail
+and everything else: a swinging bell, the time, the alarm's name, its repeat
+and sound, and two large buttons, Snooze (when the alarm allows it) and Stop.
+The panel is woken out of the ambient face, and activity is reported while it
+rings, so the idle timeout cannot drop back to the ambient face underneath.
+
+The sound is the alarm's station, played through the radio feed, or its tone.
+The tones are synthesised by `tone_player` (`src/audio/`) sample by sample, so
+there is nothing to store and they sound the same on the clock. A station that
+has not started within 15 seconds, or stops, gives way to the tone, and the
+screen says so. The volume rises from 5 % to the alarm volume over the ramp
+time, and an alarm nobody answers stops after 15 minutes. The audio output
+takes one writer at a time, so the radio is stopped before a tone starts, and
+the radio's own volume comes back afterwards.
+
+Snooze silences the alarm for the snooze time, and meanwhile the clock page's
+chip reads "Snoozed" with the time it rings again. The alarm settings live in
+`data/settings.json`:
+
+    "alarms": { "snooze_minutes": 9, "volume": 80, "ramp_seconds": 30 }
+
 ### Weather
 
 `page_weather` stacks three cards, top to bottom:
 
 - **Now** -- a large drawn icon and the temperature, the condition with
   today's high and low, the location and when the forecast was fetched, then
-  feels-like, humidity, chance of rain, wind, sunrise and sunset.
-- **Next 24 hours** -- `PAGE_WEATHER_HOURS` (6) slots, one every four hours,
+  feels-like, humidity, chance of rain, wind, sunrise and sunset, the moon
+  drawn as it looks with how much of it is lit and whether that is growing,
+  and the next new moon.
+- **Next 20 hours** -- `PAGE_WEATHER_HOURS` (10) slots, one every two hours,
   each with its time, icon, temperature and chance of rain.
 - **Next 7 days** -- `PAGE_WEATHER_DAYS` (7) columns, today first and on a
   tile, each with an icon, chance of rain, and the high over the low joined by
@@ -410,6 +461,46 @@ page_weather_set_daily(days, PAGE_WEATHER_DAYS);
 Temperatures are whole degrees in whatever unit the service works in; the page
 only appends the degree sign. Passing fewer entries than there are slots hides
 the rest.
+
+#### The weather feed
+
+`ui_weather_feed` fetches the forecasts from [Open-Meteo](https://open-meteo.com),
+which is free and needs no key: the current conditions, the next 20 hours, the
+week, and the quarter-hourly precipitation behind the clock page's MinuteCast
+band; and, in a second request, the air quality forecast. The requests and the
+parsing are plain C in `src/weather/open_meteo.c`, and the answers are read on
+the download worker's thread.
+
+The location comes from the settings or, while they leave it automatic, from
+the public IP's location at ip-api.com:
+
+    "location": { "auto": false, "name": "Athens", "latitude": 37.98, "longitude": 23.73 }
+
+It fetches at start, then every half hour for the weather and every hour for
+the air quality. A failure is retried after a minute, then after two, doubling
+up to a quarter of an hour. Changing the location, or `fahrenheit`, fetches
+again at once.
+
+Until the first forecast arrives the page is covered by a spinner, or by what
+went wrong with a Try again button (`page_weather_set_state()`). After that a
+failed refresh leaves the forecast up: the "Updated" line turns amber and a
+notice says the refresh failed. The refresh glyph beside that line fetches on
+demand, and turns into a spinner while it does.
+
+The moon comes with the forecast: Open-Meteo's daily `moon_phase`, 0 at new
+moon and 0.5 at full, asked for from 31 days back to the 16 days ahead the
+forecast reaches (`past_days` only lengthens the daily data; the hourly and
+quarter-hourly keep their own ranges). Today's value gives how much of the
+disc is lit, with a green arrow up while tomorrow's share is larger and a red
+one down while it is smaller, and draws `ui_moon_icon` lit from the side it is
+seen lit -- the other side south of the equator.
+
+A new moon falls between the two days where the phase wraps round, placed
+between their middles in proportion; that puts September 2026's at 03:30 UTC
+on the 11th, against the US Naval Observatory's 03:27. The next new moon is
+the first such within the forecast. When it is further off, it is the last one
+before today, always within the 31 days back, plus a mean lunation, which the
+real one keeps within some hours of.
 
 Tapping the weather section of the clock page opens this page, awake only,
 the same way the air quality section opens its page.
@@ -452,6 +543,56 @@ from npm instead. It falls back to Montserrat 28 for everything else, so the
 other pages' `LV_SYMBOL_*` icons render through it unchanged. The
 `lv_font_conv` command to regenerate it, with more code points, is in
 `ui_theme.h`.
+
+### Air quality and the sensors
+
+The clock measures the room with a Sensirion SEN69C -- PM1.0 to PM10, the VOC
+and NOx indices, formaldehyde and CO2 -- and an SHT45 for the temperature and
+humidity, which reads more accurately than the SEN69C's own sensor beside its
+fan. The drivers are in `src/sensors/sensor_hw_esp.c` (I2C, not yet tried on
+the board); in the simulator `sensor_hw_sim.c` makes up a bedroom whose CO2
+builds overnight and whose particles rise at breakfast and dinner.
+
+`sensor_sampler` reads the sensors every two seconds on its own thread, and on
+the LVGL thread `ui_air_feed` takes each reading to:
+
+- the air quality page's tiles, drawn amber or red once a value is worth a
+  look, and "--" while a sensor warms up or does not answer;
+- `sensor_history`: 96 averages each over the last hour, day and week, which
+  the chart plots and the analysis card sums up as the index's low, average,
+  high and trend. It is written to the SD card every 10 minutes
+  (`data/sdcard/sensors/history.bin` in the simulator), so a restart does not
+  start the week over;
+- the clock page's air section;
+- the MQTT broker.
+
+The sensor selector lists "Indoor" and the forecast's place. Outdoors, PM2.5,
+PM10 and the index come from the Open-Meteo air quality forecast -- hourly over
+the past week, interpolated onto the chart -- with the temperature and humidity
+from the weather forecast. The forecast strip shows the index now, every three
+hours for the next twelve, and tomorrow's worst hour, with its own refresh.
+
+#### Readings over MQTT
+
+Every `publish_interval` seconds the readings since the last message are
+averaged and published as one JSON object to `topic`:
+
+    smartclock/sensors  {"pm1_0":3.9,"pm2_5":5,"pm4_0":5.6,"pm10":8,"voc_index":112,
+                         "nox_index":1,"hcho":17.2,"co2":478,"temperature":22.8,
+                         "humidity":42.6,"aqi":27}
+
+With `discovery` on, every metric is announced to Home Assistant's MQTT
+discovery (`homeassistant/sensor/<client_id>/<key>/config`, retained) whenever
+the connection comes up, so they appear as one device with the right units and
+device classes. `temperature_offset` corrects the SHT45 for the warmth of the
+case:
+
+    "sensors": { "publish_interval": 60, "temperature_offset": -1.5,
+                 "topic": "smartclock/sensors", "discovery": true }
+
+`src/net/mqtt_client.h` is the seam. In the simulator there is no broker: the
+link follows the settings feed's pretend connection and messages are only
+logged. On the clock it is where esp-mqtt goes.
 
 ### Radio
 
@@ -512,13 +653,24 @@ free themselves.
 |---|---|
 | Icecast or Shoutcast MP3 | minimp3 (`third_party/minimp3`, CC0) |
 | Icecast or Shoutcast AAC and HE-AAC | Helix AAC (`third_party/helix-aac`, RealNetworks Public Source License) |
-| Track titles | the ICY metadata those servers send, shown under the station name |
+| Track titles | the ICY metadata those servers send, shown under the station name; an empty " - " shows nothing |
 | HLS | the playlist, or a master playlist's first variant; MPEG-TS or packed-audio segments |
 
 Encrypted HLS and fragmented-MP4 segments are not played; the page says so. A
 stream that fails or drops is retried three times. Helix does not check a frame
 against its input, so the player hands it whole ADTS frames only, and a guard in
 the vendored `bitstream.c` stops a damaged frame reading past its buffer.
+
+minimp3 keeps its state between frames -- the bit reservoir a frame borrows
+from the frames before it, and the overlap that joins them -- only while the
+next frame's header follows the frame it is given. Handed a window that ends
+just after a frame, it resets and that frame comes out wrong or silent. The
+decoder's window ends wherever the network happened to stop, so it holds back
+`MP3_LOOKAHEAD_BYTES` (the largest frame plus a header) until more arrives.
+Without that, streams broke up into distortion. A harness decoding 20 s
+captures of three stations the player's way decoded 0-22 % of the audio
+correctly; with the lookahead, every sample matched decoding the capture in
+one piece.
 
 Only the audio output differs between the two builds (`src/audio/audio_sink.h`):
 
@@ -948,8 +1100,28 @@ page_smart_home_update_device(index);
 Input works the other way, through callbacks (`page_radio_set_play_cb()`,
 `page_smart_home_set_command_cb()`, ...). Treat those as *requests*: let the
 real state come back through the setters rather than assuming the action
-succeeded. Every page currently ships with placeholder content so the layout
-is visible before any of it is wired up; search for `TODO` for the seams.
+succeeded. The calendar is the one part of the UI still showing placeholder
+content; search for `TODO` for the seams left on the clock's side.
+
+### Loading, errors and notices
+
+`ui_status` gives every page the same three ways to say that something is
+missing or went wrong:
+
+- a **cover** (`ui_status_create()`, `ui_status_set()`) over a card, a section
+  or a whole page until its first data arrives: a spinner while LOADING, or a
+  warning, the reason and an optional Try again button when FAILED. It keeps to
+  its parent's size and corners and stays out of its layout; one shorter than
+  150 px, like the forecast strip's, lines its contents up in a row;
+- a **refresh control** (`ui_refresh_create()`): a glyph the size of the text
+  beside it, with a fingertip-sized touch area, that turns into a spinner while
+  busy;
+- a **notice** (`ui_notice_show()`): a banner at the top of the screen for a
+  failure away from the page it concerns. It fades after six seconds, or at a
+  tap.
+
+Once data has been shown, a failure never takes it away: the data stays up,
+marked stale, and a notice says what failed.
 
 ### Alignment and icons
 

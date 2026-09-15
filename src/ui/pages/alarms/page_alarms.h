@@ -54,6 +54,13 @@ extern "C" {
 /** Longest label an alarm can carry, including the terminator. */
 #define PAGE_ALARMS_NAME_LEN 24
 
+/** A radio station's UUID, including the terminator. */
+#define PAGE_ALARMS_STATION_LEN 37
+
+/** Most stations the sound menu lists, and the longest name it keeps for one. */
+#define PAGE_ALARMS_STATIONS_MAX     32
+#define PAGE_ALARMS_STATION_NAME_LEN 64
+
 /**********************
  *      TYPEDEFS
  **********************/
@@ -92,8 +99,15 @@ typedef struct {
     uint8_t  days;             /**< Bit set of page_alarm_days_t */
     bool     enabled;
     bool     snooze;
-    uint8_t  tone;             /**< page_alarm_tone_t */
+    uint8_t  tone;             /**< page_alarm_tone_t; also what plays if `station` cannot */
+    char     station[PAGE_ALARMS_STATION_LEN];  /**< Radio station to wake to, by UUID; empty for the tone */
 } page_alarm_t;
+
+/** A saved radio station, as the sound menu offers it. */
+typedef struct {
+    const char * uuid;
+    const char * name;
+} page_alarm_station_t;
 
 /** Fired after any change, so the application can persist the new set. */
 typedef void (*page_alarms_changed_cb_t)(const page_alarm_t alarms[], uint32_t count);
@@ -146,6 +160,21 @@ void page_alarms_days_text(uint8_t days, char * buf, size_t len);
  * @return       its display name, or the first tone's name if out of range
  */
 const char * page_alarms_tone_name(uint8_t tone);
+
+/**
+ * Replace the radio stations the sound menu offers after the tones. An editor
+ * that is open keeps what it had picked.
+ * @param stations   array of stations; copied
+ * @param count      clamped to PAGE_ALARMS_STATIONS_MAX
+ */
+void page_alarms_set_stations(const page_alarm_station_t stations[], uint32_t count);
+
+/**
+ * @param uuid   a station's UUID
+ * @return       its name as last given to page_alarms_set_stations(), or NULL
+ *               if it is not among them
+ */
+const char * page_alarms_station_name(const char * uuid);
 
 #ifdef __cplusplus
 } /*extern "C"*/

@@ -21,7 +21,11 @@
  *                  "timezone_auto": true, "timezone": "Europe/Athens",
  *                  "timezone_posix": "EET-2EEST,M3.5.0/3,M10.5.0/4",
  *                  "clock_24h": true, "show_seconds": true, "date_format": "dmy" },
- *     "general": { "language": "en", "fahrenheit": false }
+ *     "general": { "language": "en", "fahrenheit": false },
+ *     "location": { "auto": true, "name": "Athens", "latitude": 37.98, "longitude": 23.73 },
+ *     "alarms":  { "snooze_minutes": 9, "volume": 80, "ramp_seconds": 30 },
+ *     "sensors": { "publish_interval": 60, "temperature_offset": -1.5,
+ *                  "topic": "smartclock/sensors", "discovery": true }
  *   }
  *
  * Anything missing or out of range takes its default, so an old or partial
@@ -55,6 +59,7 @@ extern "C" {
 #define SETTINGS_TOPIC_LEN     96
 #define SETTINGS_LANGUAGE_LEN  8
 #define SETTINGS_ZONE_LEN      48   /**< Time zone name, and its POSIX string */
+#define SETTINGS_LOCATION_LEN  48   /**< Place name shown on the forecasts */
 
 /** Accent colours the UI offers; ui_theme.c names them, in this many. */
 #define SETTINGS_ACCENT_COUNT  8
@@ -116,6 +121,24 @@ typedef struct {
     /*General*/
     char language[SETTINGS_LANGUAGE_LEN];   /**< "en"; the only one there is so far */
     bool fahrenheit;
+
+    /*Where the forecasts are for. Automatic takes the public IP's location;
+     *otherwise the coordinates below, shown under the name beside them.*/
+    bool   location_auto;
+    char   location_name[SETTINGS_LOCATION_LEN];
+    double latitude;    /**< Degrees north */
+    double longitude;   /**< Degrees east */
+
+    /*Alarms*/
+    uint8_t  alarm_snooze_minutes;   /**< 1..30 */
+    uint8_t  alarm_volume;           /**< Percent the alarm rises to */
+    uint16_t alarm_ramp_seconds;     /**< How long it takes to get there; 0 starts at full volume */
+
+    /*The on-board sensors*/
+    uint16_t sensor_interval;                    /**< Seconds between readings sent to the broker */
+    int16_t  sensor_temp_offset;                 /**< Tenths of a degree C added to the SHT45, which the case warms */
+    char     sensor_topic[SETTINGS_TOPIC_LEN];   /**< Where the readings are published */
+    bool     sensor_discovery;                   /**< Announce them to Home Assistant */
 } settings_t;
 
 /**********************

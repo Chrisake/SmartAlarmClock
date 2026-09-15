@@ -44,6 +44,8 @@ extern "C" {
  *********************/
 
 #include "ui/ui_page.h"
+#include "ui/ui_status.h"
+#include "ui/ui_weather_icon.h"
 
 /*********************
  *      DEFINES
@@ -172,14 +174,23 @@ void page_clock_set_next_alarm(const char * name, const char * time, const char 
 /**
  * Set the current-conditions block above the precipitation graph. Tapping the
  * weather section opens the weather page.
- * @param icon       LV_SYMBOL_* standing in for a weather glyph
+ * @param icon        the condition, drawn; the _NIGHT variants after dark
  * @param temp        e.g. "21" UI_DEG
  * @param condition   e.g. "Partly cloudy"
  * @param real_feel   e.g. "19" UI_DEG
  * @param humidity    e.g. "62 %"
  */
-void page_clock_set_weather_now(const char * icon, const char * temp, const char * condition,
+void page_clock_set_weather_now(ui_weather_t icon, const char * temp, const char * condition,
                                 const char * real_feel, const char * humidity);
+
+/**
+ * Say whether there is a forecast for the weather section. Until there is,
+ * the section shows a spinner, or why not; tapping it still opens the weather
+ * page, which offers Try again.
+ * @param state     loading, ready or failed
+ * @param message   why, when failed
+ */
+void page_clock_set_weather_state(ui_status_state_t state, const char * message);
 
 /**
  * Fill the minute-by-minute precipitation graph.
@@ -230,7 +241,7 @@ void page_clock_set_events(const page_clock_event_t events[], uint32_t count);
 
 /**
  * Set the air quality summary. Tapping the section opens the air quality page.
- * @param aqi     index value, 0..500; drives the colour and band name
+ * @param aqi     index value, 0..500; drives the colour and band name; negative when unknown
  * @param pm25    e.g. "8 ug/m3"
  * @param co2     e.g. "640 ppm"
  */
@@ -242,6 +253,12 @@ void page_clock_set_air_summary(int32_t aqi, const char * pm25, const char * co2
  * @param humidity      e.g. "46 %"
  */
 void page_clock_set_indoor(const char * temperature, const char * humidity);
+
+/**
+ * As page_clock_set_weather_state(), for the air quality section: whether
+ * the sensors have reported yet.
+ */
+void page_clock_set_air_state(ui_status_state_t state, const char * message);
 
 #ifdef __cplusplus
 } /*extern "C"*/

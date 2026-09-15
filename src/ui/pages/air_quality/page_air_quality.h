@@ -36,6 +36,7 @@ extern "C" {
  *********************/
 
 #include "ui/ui_page.h"
+#include "ui/ui_status.h"
 
 /*********************
  *      DEFINES
@@ -101,6 +102,9 @@ typedef void (*page_aq_sensor_cb_t)(uint32_t index);
 /** Called when the user adds a metric to the chart or removes it. */
 typedef void (*page_aq_plot_cb_t)(page_aq_metric_t metric, bool plotted);
 
+/** Called when the forecast's refresh button, or Try again, is tapped. */
+typedef void (*page_aq_refresh_cb_t)(void);
+
 /**********************
  * GLOBAL PROTOTYPES
  **********************/
@@ -112,7 +116,7 @@ const ui_page_t * page_air_quality_desc(void);
 
 /**
  * Set the headline index shown next to the chart.
- * @param aqi   index value, 0..500
+ * @param aqi   index value, 0..500; negative when unknown
  */
 void page_air_quality_set_index(int32_t aqi);
 
@@ -134,7 +138,7 @@ void page_air_quality_set_metric(page_aq_metric_t metric, const char * value, co
  * max. The trace shapes are comparable; their heights are not.
  *
  * @param metric   which trace
- * @param values   array of samples, oldest first
+ * @param values   array of samples, oldest first; LV_CHART_POINT_NONE for a gap
  * @param count    number of samples, clamped to PAGE_AQ_HISTORY_POINTS
  * @param min      value drawn at the bottom of the chart
  * @param max      value drawn at the top of the chart
@@ -217,6 +221,43 @@ void page_air_quality_set_sensor_cb(page_aq_sensor_cb_t cb);
  * @param cb   callback, or NULL to clear
  */
 void page_air_quality_set_plot_cb(page_aq_plot_cb_t cb);
+
+/**
+ * Say whether there are readings for the selected sensor. Until there are,
+ * the chart and the analysis are covered -- a spinner, or why not -- and the
+ * tiles read "--".
+ * @param state     loading, ready or failed
+ * @param message   why, when failed
+ */
+void page_air_quality_set_readings_state(ui_status_state_t state, const char * message);
+
+/**
+ * The same for the forecast strip. Failed offers Try again, which fires the
+ * refresh callback.
+ */
+void page_air_quality_set_forecast_state(ui_status_state_t state, const char * message);
+
+/**
+ * Say how fresh the forecast is, beside its refresh button.
+ * @param updated   e.g. "Updated 10:15 AM"; NULL for nothing
+ * @param stale     the last refresh failed: drawn as a warning
+ */
+void page_air_quality_set_forecast_updated(const char * updated, bool stale);
+
+/**
+ * @param refreshing   true while the forecast is fetched: its refresh button turns into a spinner
+ */
+void page_air_quality_set_forecast_refreshing(bool refreshing);
+
+/**
+ * @param cb   called when the forecast's refresh button or Try again is tapped; NULL to clear
+ */
+void page_air_quality_set_refresh_cb(page_aq_refresh_cb_t cb);
+
+/**
+ * @return   the history window the chart is showing
+ */
+page_aq_range_t page_air_quality_get_range(void);
 
 #ifdef __cplusplus
 } /*extern "C"*/

@@ -11,8 +11,11 @@
 #include "ui/ui_theme.h"
 #include "ui/ui_clock_feed.h"
 #include "ui/ui_devices_feed.h"
+#include "ui/ui_air_feed.h"
+#include "ui/ui_weather_feed.h"
 #include "ui/pages/clock/page_clock.h"
 #include "ui/pages/settings/page_settings.h"
+#include "net/mqtt_client.h"
 #include "settings/clock_time.h"
 #include "settings/settings.h"
 
@@ -317,6 +320,9 @@ static void mqtt_connect_start(void)
     const settings_t * s = settings_get();
     char               text[96];
 
+    /*However this goes, the connection there was is gone.*/
+    mqtt_client_set_connected(false);
+
     if(s->mqtt_host[0] == '\0') {
         mqtt_status(PAGE_SETTINGS_LINK_IDLE, "No broker set");
         return;
@@ -346,6 +352,10 @@ static void changed(const settings_t * edited)
     settings_set(&after);
     store();
     behaviour_apply();
+
+    /*The forecasts follow the location and the units; the sensors' readings the units.*/
+    ui_weather_feed_settings_changed(&before, &after);
+    if(before.fahrenheit != after.fahrenheit) ui_air_feed_republish();
 
     bool zone_changed = strcmp(before.timezone_posix, after.timezone_posix) != 0;
     bool retime       = zone_changed || before.show_seconds != after.show_seconds;
@@ -518,6 +528,7 @@ static void mqtt_done(lv_timer_t * timer)
                 s->mqtt_tls ? " over TLS" : "");
     mqtt_status(PAGE_SETTINGS_LINK_CONNECTED, text);
     ui_devices_feed_set_link(PAGE_DEVICES_LINK_ONLINE, s->mqtt_host);
+    mqtt_client_set_connected(true);
 }
 
 static void rebuild_async(void * user)

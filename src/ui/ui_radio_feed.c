@@ -7,6 +7,7 @@
  *********************/
 
 #include "ui/ui_radio_feed.h"
+#include "ui/pages/alarms/page_alarms.h"
 #include "ui/pages/radio/page_radio.h"
 #include "audio/radio_player.h"
 #include "net/http_worker.h"
@@ -67,6 +68,7 @@ static void entry_describe(entry_t * entry);
 static void entry_set_favicon(entry_t * entry, uint8_t * pixels);
 static void entry_row(const entry_t * entry, page_radio_station_t * row);
 static void entry_row_update(uint32_t index);
+static void alarm_stations_publish(void);
 
 static void details_fetch(void);
 static void details_done(http_job_t * job);
@@ -167,6 +169,27 @@ void ui_radio_feed_republish(void)
     player_poll();
 }
 
+bool ui_radio_feed_play_station(const char * uuid)
+{
+    int32_t index = saved_find(uuid);
+    if(index < 0 || !saved[index]->info.stream_url[0]) return false;
+
+    current = index;
+    page_radio_set_current_station((uint32_t)index);
+    player_start();
+    return playing;
+}
+
+void ui_radio_feed_stop(void)
+{
+    player_stop();
+}
+
+int32_t ui_radio_feed_get_volume(void)
+{
+    return volume;
+}
+
 /**********************
  *   STATIC FUNCTIONS
  **********************/
@@ -226,6 +249,7 @@ static void list_publish(void)
 
     page_radio_set_stations(rows, saved_count);
     if(current >= 0) page_radio_set_current_station((uint32_t)current);
+    alarm_stations_publish();
 }
 
 static void now_playing_publish(void)
@@ -286,6 +310,20 @@ static void entry_row_update(uint32_t index)
     entry_row(saved[index], &rows[index]);
     page_radio_update_station(index, &rows[index]);
     if((int32_t)index == current) now_playing_publish();
+    alarm_stations_publish();
+}
+
+/** The alarm editor's sound menu offers the saved stations, by name. */
+static void alarm_stations_publish(void)
+{
+    page_alarm_station_t stations[RADIO_STORE_MAX];
+
+    for(uint32_t i = 0; i < saved_count; i++) {
+        stations[i].uuid = saved[i]->info.uuid;
+        stations[i].name = saved[i]->info.name;
+    }
+
+    page_alarms_set_stations(stations, saved_count);
 }
 
 /**
@@ -631,6 +669,7 @@ static void station_removed(uint32_t index)
 
     memmove(&saved[index], &saved[index + 1], (saved_count - index - 1) * sizeof(saved[0]));
     saved_count--;
+    alarm_stations_publish();
 
     list_save();
     radio_store_remove_station(entry->info.uuid);
@@ -661,6 +700,7 @@ static void station_moved(uint32_t from, uint32_t to)
     else if(from > to && current >= (int32_t)to && current < (int32_t)from) current++;
 
     list_save();
+    alarm_stations_publish();
 }
 
 static void search_requested(page_radio_search_field_t field, const char * query)

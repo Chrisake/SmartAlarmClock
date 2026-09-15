@@ -50,6 +50,9 @@
 /** Height of the drawn thermometer beside the indoor temperature. */
 #define SENSOR_ICON_HEIGHT 30
 
+/** Side of the drawn condition icon beside the temperature. */
+#define WEATHER_ICON_SIZE 44
+
 /** Width of the gutter holding the Light/Heavy scale labels. */
 #define RAIN_AXIS_WIDTH 42
 
@@ -97,11 +100,9 @@ static const ui_page_t desc = {
     .on_hide = NULL,
 };
 
-/*Placeholder content. Deliberately varied in length so that layout problems
- *with real data show up here rather than on the device.*/
-/*A shower that arrives after ~24 min, peaks, and clears before the two hours
- *are up -- enough shape to show every intensity in the band.*/
-static page_clock_rain_level_t rain_defaults[PAGE_CLOCK_RAIN_SEGMENTS];
+/*Placeholder calendar, until there is a calendar service. Deliberately varied
+ *in length so that layout problems with real data show up here rather than
+ *on the device.*/
 
 /*One merged list, as the application would pass it: today's schedule plus the
  *next fortnight of all-day entries. The routing table splits it.
@@ -223,6 +224,7 @@ static lv_obj_t * weather_temp;
 static lv_obj_t * weather_condition;
 static lv_obj_t * weather_real_feel;
 static lv_obj_t * weather_humidity;
+static lv_obj_t * weather_status;
 
 static lv_obj_t *          rain_chart;
 static lv_chart_series_t * rain_series;
@@ -242,6 +244,7 @@ static lv_obj_t * air_pm25;
 static lv_obj_t * air_co2;
 static lv_obj_t * air_temp;
 static lv_obj_t * air_humidity;
+static lv_obj_t * air_status;
 
 /**********************
  *   GLOBAL FUNCTIONS
@@ -314,10 +317,10 @@ void page_clock_set_next_alarm(const char * name, const char * time, const char 
     geometry_refresh();
 }
 
-void page_clock_set_weather_now(const char * icon, const char * temp, const char * condition,
+void page_clock_set_weather_now(ui_weather_t icon, const char * temp, const char * condition,
                                 const char * real_feel, const char * humidity)
 {
-    lv_label_set_text(weather_icon, icon);
+    ui_weather_icon_set(weather_icon, icon);
     lv_label_set_text(weather_temp, temp);
     lv_label_set_text(weather_condition, condition);
     lv_label_set_text(weather_real_feel, real_feel);
@@ -390,14 +393,16 @@ void page_clock_set_events(const page_clock_event_t events[], uint32_t count)
 
 void page_clock_set_air_summary(int32_t aqi, const char * pm25, const char * co2)
 {
-    lv_color_t color = ui_aqi_color(aqi);
+    bool       known = aqi >= 0;
+    lv_color_t color = known ? ui_aqi_color(aqi) : UI_COLOR_TEXT_DIM;
 
-    lv_arc_set_value(air_arc, aqi);
+    lv_arc_set_value(air_arc, known ? aqi : 0);
     lv_obj_set_style_arc_color(air_arc, color, LV_PART_INDICATOR);
 
-    lv_label_set_text_fmt(air_value, "%d", (int)aqi);
+    if(known) lv_label_set_text_fmt(air_value, "%d", (int)aqi);
+    else      lv_label_set_text(air_value, "--");
     lv_obj_set_style_text_color(air_value, color, LV_PART_MAIN);
-    lv_label_set_text(air_band, ui_aqi_band(aqi));
+    lv_label_set_text(air_band, known ? ui_aqi_band(aqi) : "");
     lv_label_set_text(air_pm25, pm25);
     lv_label_set_text(air_co2, co2);
 }
@@ -406,6 +411,16 @@ void page_clock_set_indoor(const char * temperature, const char * humidity)
 {
     lv_label_set_text(air_temp, temperature);
     lv_label_set_text(air_humidity, humidity);
+}
+
+void page_clock_set_weather_state(ui_status_state_t state, const char * message)
+{
+    ui_status_set(weather_status, state, message);
+}
+
+void page_clock_set_air_state(ui_status_state_t state, const char * message)
+{
+    ui_status_set(air_status, state, message);
 }
 
 /**********************
@@ -488,30 +503,9 @@ static lv_obj_t * create(lv_obj_t * parent)
 
     clock_block_create(root);
 
-    /*Seed the page so the layout reads correctly before any service reports.*/
-    /*A shower arriving after ~24 min, peaking around the hour, then clearing.
-     *A parabola with a little jitter on top, so the curve looks like sampled
-     *weather rather than a tidy plateau.*/
-    for(uint32_t i = 0; i < PAGE_CLOCK_RAIN_SEGMENTS; i++) {
-        int32_t offset    = (int32_t)i - 30;
-        int32_t intensity = 100 - (offset * offset) / 4
-                            + ((int32_t)((i * 37) % 11) - 5) * 3;
-
-        if(i < 12 || intensity <= 10) rain_defaults[i] = PAGE_CLOCK_RAIN_NONE;
-        else if(intensity <= 35)      rain_defaults[i] = PAGE_CLOCK_RAIN_LIGHT;
-        else if(intensity <= 62)      rain_defaults[i] = PAGE_CLOCK_RAIN_MODERATE;
-        else if(intensity <= 85)      rain_defaults[i] = PAGE_CLOCK_RAIN_HEAVY;
-        else                          rain_defaults[i] = PAGE_CLOCK_RAIN_EXTREME;
-    }
-    page_clock_set_rain(rain_defaults, PAGE_CLOCK_RAIN_SEGMENTS, "Rain starts in 24 min");
-    page_clock_set_weather_now(LV_SYMBOL_IMAGE, "21" UI_DEG, "Partly cloudy",
-                               "19" UI_DEG, "62 %");
-    char alarm_time[12];
-    ui_format_time(alarm_time, sizeof(alarm_time), 7, 0);
-    page_clock_set_next_alarm("Wake up", alarm_time, "Tomorrow", true);
+    /*The feeds fill in the time, the next alarm, the weather and the air as
+     *soon as they start. The calendar has no service yet, so it shows samples.*/
     events_seed();
-    page_clock_set_air_summary(42, "PM2.5  8 ug/m3", "CO2  640 ppm");
-    page_clock_set_indoor("21" UI_DEG "C", "46 %");
 
     /*Start ambient, without animating into it.*/
     mode_apply(true, false);
@@ -787,12 +781,10 @@ static void weather_section_create(lv_obj_t * parent)
     lv_obj_set_flex_align(head, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(head, UI_GAP, LV_PART_MAIN);
 
-    /* TODO: swap the LV_SYMBOL_* placeholder for a weather icon font or an
-     * image; the setter takes whatever string you hand it. */
-    weather_icon = ui_label_create(head, LV_SYMBOL_IMAGE, UI_FONT_LG, UI_COLOR_ACCENT);
-    weather_temp = ui_label_create(head, "21" UI_DEG, UI_FONT_XL, UI_COLOR_TEXT);
+    weather_icon = ui_weather_icon_create(head, WEATHER_ICON_SIZE, UI_WEATHER_CLEAR);
+    weather_temp = ui_label_create(head, "--", UI_FONT_XL, UI_COLOR_TEXT);
 
-    weather_condition = ui_label_create(head, "Partly cloudy", UI_FONT_SM, UI_COLOR_TEXT_DIM);
+    weather_condition = ui_label_create(head, "", UI_FONT_SM, UI_COLOR_TEXT_DIM);
     lv_obj_set_flex_grow(weather_condition, 1);
     ui_label_single_line(weather_condition, UI_FONT_SM);
 
@@ -899,6 +891,8 @@ static void weather_section_create(lv_obj_t * parent)
     lv_obj_set_style_length(scale, RAIN_TICK_MINOR, LV_PART_ITEMS);
     lv_obj_set_style_line_color(scale, UI_COLOR_BORDER, LV_PART_ITEMS);
     lv_obj_set_style_line_width(scale, 1, LV_PART_ITEMS);
+
+    weather_status = ui_status_create(section, UI_COLOR_BG, NULL, NULL);
 }
 
 static void calendar_section_create(lv_obj_t * parent)
@@ -991,7 +985,7 @@ static void air_section_create(lv_obj_t * parent)
     lv_obj_set_style_border_width(air_arc, 0, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(air_arc, LV_OPA_TRANSP, LV_PART_MAIN);
 
-    air_value = ui_label_create(air_arc, "0", UI_FONT_LG, UI_COLOR_GOOD);
+    air_value = ui_label_create(air_arc, "--", UI_FONT_LG, UI_COLOR_TEXT_DIM);
     lv_obj_center(air_value);
 
     lv_obj_t * summary = flow_create(head, LV_FLEX_FLOW_COLUMN);
@@ -1009,6 +1003,9 @@ static void air_section_create(lv_obj_t * parent)
 
     air_temp     = sensor_stat_create(indoor, NULL, "--");
     air_humidity = sensor_stat_create(indoor, UI_SYMBOL_HUMIDITY, "--");
+
+    /*Under the caption, which stays.*/
+    air_status = ui_status_create(body, UI_COLOR_BG, NULL, NULL);
 }
 
 /**
