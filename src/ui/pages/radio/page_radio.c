@@ -8,6 +8,7 @@
 
 #include "ui/pages/radio/radio_private.h"
 #include "ui/ui_theme.h"
+#include "ui/ui_confirm.h"
 
 /*********************
  *      DEFINES
@@ -36,6 +37,11 @@
 #define DRAG_EDGE        48
 #define DRAG_SCROLL_STEP 8
 
+/** How faded the content of the copy of a dragged station that follows the
+ *  finger is. Its backing stays solid, so the rows it passes over do not show
+ *  through and jumble the text. */
+#define DRAG_GHOST_OPA LV_OPA_60
+
 /**********************
  *  STATIC PROTOTYPES
  **********************/
@@ -54,6 +60,9 @@ static void       edit_reveal_anim(void * item, int32_t amount);
 static void       station_select(uint32_t index);
 static void       drag_follow(lv_obj_t * item);
 static void       drag_finish(lv_obj_t * item);
+static void       drag_ghost_create(lv_obj_t * item, int32_t finger_y);
+static void       drag_ghost_move(int32_t finger_y);
+static void       drag_ghost_delete(void);
 
 static void play_clicked(lv_event_t * e);
 static void skip_clicked(lv_event_t * e);
@@ -62,6 +71,7 @@ static void station_clicked(lv_event_t * e);
 static void add_clicked(lv_event_t * e);
 static void edit_clicked(lv_event_t * e);
 static void remove_clicked(lv_event_t * e);
+static void remove_confirmed(void * user);
 static void handle_event(lv_event_t * e);
 
 /**********************
@@ -95,10 +105,12 @@ static uint32_t             station_current = UINT32_MAX;
 static bool playing;
 static bool editing;
 
-/** The station being dragged by its handle, and where it started. */
+/** The station being dragged by its handle, where it started, and its copy under the finger. */
 static struct {
     lv_obj_t * item;
     uint32_t   from;
+    lv_obj_t * ghost;   /**< On the top layer; NULL when not dragging */
+    int32_t    grab;    /**< How far below the row's top edge the finger took hold */
 } drag;
 
 static page_radio_station_cb_t station_cb;
@@ -121,6 +133,8 @@ void page_radio_set_stations(const page_radio_station_t list[], uint32_t count)
     if(count > PAGE_RADIO_STATION_MAX) count = PAGE_RADIO_STATION_MAX;
 
     drag.item = NULL;
+    drag_ghost_delete();
+    ui_confirm_close();
     lv_obj_clean(station_list);
     station_count   = count;
     station_current = UINT32_MAX;
@@ -375,6 +389,7 @@ static lv_obj_t * create(lv_obj_t * parent)
     station_current = UINT32_MAX;
     editing         = false;
     drag.item       = NULL;
+    drag_ghost_delete();
 
     lv_obj_t * root = lv_obj_create(parent);
     lv_obj_set_size(root, LV_PCT(100), LV_PCT(100));
@@ -399,6 +414,8 @@ static lv_obj_t * create(lv_obj_t * parent)
 static void on_hide(void)
 {
     radio_search_close();
+    ui_confirm_close();
+    drag_ghost_delete();
     if(editing) edit_set(false);
 }
 
@@ -475,6 +492,9 @@ static void stations_card_create(lv_obj_t * parent)
     lv_obj_t * card = ui_card_create(parent);
     lv_obj_set_grid_cell(card, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_STRETCH, 0, 1);
     lv_obj_set_style_pad_row(card, UI_GAP, LV_PART_MAIN);
+    /*The card's right padding moves into its children: into the list, it
+     *becomes the gutter the scroll bar runs in, clear of the rows' handles.*/
+    lv_obj_set_style_pad_right(card, 0, LV_PART_MAIN);
 
     /*[+] ...................... Edit*/
     lv_obj_t * bar = lv_obj_create(card);
@@ -482,6 +502,7 @@ static void stations_card_create(lv_obj_t * parent)
     lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(bar, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(bar, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(bar, UI_PAD, LV_PART_MAIN);
     lv_obj_set_scrollable(bar, false);
     lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -510,6 +531,7 @@ static void stations_card_create(lv_obj_t * parent)
     lv_obj_set_style_bg_opa(station_list, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(station_list, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(station_list, 0, LV_PART_MAIN);
+    ui_scrollbar_gutter(station_list, UI_PAD);
     lv_obj_set_style_pad_row(station_list, 6, LV_PART_MAIN);
     lv_obj_set_flex_flow(station_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scroll_dir(station_list, LV_DIR_VER);
@@ -709,6 +731,8 @@ static void drag_follow(lv_obj_t * item)
     lv_obj_get_coords(station_list, &area);
     if(point.y < area.y1 + DRAG_EDGE) lv_obj_scroll_by_bounded(station_list, 0, DRAG_SCROLL_STEP, LV_ANIM_OFF);
     else if(point.y > area.y2 - DRAG_EDGE) lv_obj_scroll_by_bounded(station_list, 0, -DRAG_SCROLL_STEP, LV_ANIM_OFF);
+
+    drag_ghost_move(point.y);
 }
 
 static void drag_finish(lv_obj_t * item)
@@ -718,6 +742,7 @@ static void drag_finish(lv_obj_t * item)
 
     lv_obj_remove_state(item, LV_STATE_USER_1);
     drag.item = NULL;
+    drag_ghost_delete();
 
     if(from == to || from >= station_count || to >= station_count) return;
 
@@ -742,6 +767,112 @@ static void drag_finish(lv_obj_t * item)
     }
 
     if(move_cb) move_cb(from, to);
+}
+
+/**
+ * A faded copy of the dragged row on the top layer, laid over the row, which
+ * then follows the finger up and down while the row itself moves through the
+ * list to where it will land.
+ *
+ * Built from plain parts, each faded by its own opacity, with no shadow and no
+ * rounded clipping of the logo. Fading the whole object instead -- or clipping
+ * its corners -- would have the renderer draw it into an off-screen layer
+ * every frame it moves, which the clock's software renderer is better spared:
+ * this way a move only redraws the strips it leaves and enters.
+ */
+static void drag_ghost_create(lv_obj_t * item, int32_t finger_y)
+{
+    int32_t index = lv_obj_get_index(item);
+
+    drag_ghost_delete();
+    if(index < 0 || (uint32_t)index >= station_count) return;
+
+    const page_radio_station_t * station = &stations[index];
+    lv_area_t                    area;
+    char                         subtitle[SUBTITLE_LEN];
+
+    lv_obj_get_coords(item, &area);
+    drag.grab = finger_y - area.y1;
+
+    lv_obj_t * ghost = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(ghost);
+    lv_obj_set_size(ghost, lv_area_get_width(&area), lv_area_get_height(&area));
+    lv_obj_set_pos(ghost, area.x1, area.y1);
+    lv_obj_set_style_bg_color(ghost, UI_COLOR_CARD_ALT, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(ghost, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(ghost, UI_COLOR_ACCENT, LV_PART_MAIN);
+    lv_obj_set_style_border_width(ghost, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(ghost, DRAG_GHOST_OPA, LV_PART_MAIN);
+    lv_obj_set_style_radius(ghost, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(ghost, UI_GAP, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(ghost, UI_PAD, LV_PART_MAIN);
+    lv_obj_set_flex_flow(ghost, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(ghost, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_scrollable(ghost, false);
+    lv_obj_set_clickable(ghost, false);
+
+    /*Where the row's remove button is, so the rest lines up with the row.*/
+    lv_obj_t * spacer = lv_obj_create(ghost);
+    lv_obj_remove_style_all(spacer);
+    lv_obj_set_size(spacer, REMOVE_SIZE, 1);
+
+    lv_obj_t * icon = radio_icon_create(ghost, RADIO_ROW_ICON_SIZE, RADIO_ROW_ICON_SIZE, UI_FONT_MD, UI_COLOR_CARD);
+    radio_icon_set(icon, station->favicon);
+    lv_obj_set_style_clip_corner(icon, false, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(icon, DRAG_GHOST_OPA, LV_PART_MAIN);
+    lv_obj_set_style_image_opa(lv_obj_get_child(icon, 0), DRAG_GHOST_OPA, LV_PART_MAIN);
+    lv_obj_set_style_text_opa(lv_obj_get_child(icon, 1), DRAG_GHOST_OPA, LV_PART_MAIN);
+
+    lv_obj_t * text = lv_obj_create(ghost);
+    lv_obj_remove_style_all(text);
+    lv_obj_set_height(text, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(text, 1);
+    lv_obj_set_flex_flow(text, LV_FLEX_FLOW_COLUMN);
+
+    lv_obj_t * name = ui_label_create(text, station->name ? station->name : "", UI_FONT_MD, UI_COLOR_TEXT);
+    lv_obj_set_width(name, LV_PCT(100));
+    ui_label_single_line(name, UI_FONT_MD);
+    lv_obj_set_style_text_opa(name, DRAG_GHOST_OPA, LV_PART_MAIN);
+
+    subtitle_write(station, subtitle, sizeof(subtitle));
+    if(subtitle[0]) {
+        lv_obj_t * line = ui_label_create(text, subtitle, UI_FONT_XS, UI_COLOR_TEXT_DIM);
+        lv_obj_set_width(line, LV_PCT(100));
+        ui_label_single_line(line, UI_FONT_XS);
+        lv_obj_set_style_text_opa(line, DRAG_GHOST_OPA, LV_PART_MAIN);
+    }
+
+    lv_obj_t * grip_box = lv_obj_create(ghost);
+    lv_obj_remove_style_all(grip_box);
+    lv_obj_set_size(grip_box, HANDLE_SIZE, HANDLE_SIZE);
+
+    lv_obj_t * grip = ui_label_create(grip_box, LV_SYMBOL_BARS, UI_FONT_MD, UI_COLOR_TEXT_DIM);
+    lv_obj_set_style_text_opa(grip, DRAG_GHOST_OPA, LV_PART_MAIN);
+    lv_obj_center(grip);
+
+    drag.ghost = ghost;
+}
+
+/** Keep the copy under the finger, within the list. */
+static void drag_ghost_move(int32_t finger_y)
+{
+    if(!drag.ghost) return;
+
+    lv_area_t list;
+    lv_obj_get_coords(station_list, &list);
+
+    int32_t height = lv_obj_get_height(drag.ghost);
+    int32_t y      = finger_y - drag.grab;
+
+    lv_obj_set_y(drag.ghost, LV_CLAMP(list.y1, y, LV_MAX(list.y1, list.y2 + 1 - height)));
+}
+
+static void drag_ghost_delete(void)
+{
+    if(!drag.ghost) return;
+
+    lv_obj_delete(drag.ghost);
+    drag.ghost = NULL;
 }
 
 static void play_clicked(lv_event_t * e)
@@ -801,6 +932,7 @@ static void edit_clicked(lv_event_t * e)
     edit_set(!editing);
 }
 
+/** Ask first: a station removed by a stray tap has to be searched for again. */
 static void remove_clicked(lv_event_t * e)
 {
     /*The button, in its slot, in the row.*/
@@ -809,8 +941,26 @@ static void remove_clicked(lv_event_t * e)
 
     if(found < 0 || (uint32_t)found >= station_count) return;
 
-    uint32_t index       = (uint32_t)found;
-    bool     was_current = index == station_current;
+    const page_radio_station_t * station = &stations[found];
+    bool                         stops   = (uint32_t)found == station_current && playing;
+
+    ui_confirm_open(station->name ? station->name : "",
+                    stops ? "Remove this station from the list? It is playing, so it will stop."
+                          : "Remove this station from the list?",
+                    "Remove", remove_confirmed, item);
+}
+
+static void remove_confirmed(void * user)
+{
+    /*Found by the row itself rather than its position: a drop elsewhere may
+     *have moved it since. The page closes the confirmation whenever the rows
+     *are rebuilt, so it is still in the list.*/
+    uint32_t index = 0;
+    while(index < station_count && station_items[index] != user) index++;
+    if(index == station_count) return;
+
+    lv_obj_t * item        = station_items[index];
+    bool       was_current = index == station_current;
 
     lv_memmove(&stations[index], &stations[index + 1], (station_count - index - 1) * sizeof(stations[0]));
     lv_memmove(&station_items[index], &station_items[index + 1],
@@ -820,12 +970,8 @@ static void remove_clicked(lv_event_t * e)
     if(was_current) station_current = UINT32_MAX;
     else if(station_current < UINT32_MAX && station_current > index) station_current--;
 
-    /*The button tapped is inside the row, so the row cannot be deleted from
-     *under its own event. Take it out of the list now, so every index after it
-     *is right straight away, and delete it once the event is over.*/
-    lv_obj_set_parent(item, lv_layer_sys());
-    lv_obj_set_hidden(item, true);
-    lv_obj_delete_async(item);
+    /*The tap was on the confirmation, not the row, so the row can go now.*/
+    lv_obj_delete(item);
 
     if(was_current) page_radio_set_now_playing(NULL, NULL, NULL);
 
@@ -841,6 +987,13 @@ static void handle_event(lv_event_t * e)
         drag.item = item;
         drag.from = (uint32_t)lv_obj_get_index(item);
         lv_obj_add_state(item, LV_STATE_USER_1);
+
+        lv_indev_t * indev = lv_indev_active();
+        lv_point_t   point;
+        if(indev) {
+            lv_indev_get_point(indev, &point);
+            drag_ghost_create(item, point.y);
+        }
     }
     else if(drag.item != item) {
         return;

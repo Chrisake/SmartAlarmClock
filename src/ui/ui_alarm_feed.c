@@ -433,7 +433,7 @@ static bool alarms_load(void)
         alarm->enabled = !cJSON_IsBool(enabled) || cJSON_IsTrue(enabled);
         alarm->snooze  = !cJSON_IsBool(snooze) || cJSON_IsTrue(snooze);
 
-        if(cJSON_IsString(name)) lv_strlcpy(alarm->name, name->valuestring, sizeof(alarm->name));
+        if(cJSON_IsString(name)) ui_format_text_copy(alarm->name, sizeof(alarm->name), name->valuestring);
 
         const cJSON * day;
         cJSON_ArrayForEach(day, days) {

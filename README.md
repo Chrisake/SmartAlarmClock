@@ -607,8 +607,15 @@ captions. Tapping a station plays it; previous and next step through the list.
 (`/json/stations/search`, most played first, broken stations hidden), with the
 results' favicons; **+** on a result saves it, and a tick marks stations
 already saved. **Edit** slides a remove button and a drag handle onto every
-station, a row at a time; **Done** folds them away again.
-Removing the station that is playing stops it and clears the selection.
+station, a row at a time; **Done** folds them away again. Dragging a station by
+its handle moves it through the list live, with a faded copy of the row under
+the finger to show the drag has taken hold. The copy is plain parts faded one
+by one over a solid backing -- no whole-object opacity, rounded clipping or
+shadow -- so the clock's software renderer draws it without an off-screen
+layer.
+A remove button asks first (`ui_confirm`: the station's name, Cancel and a red
+Remove; a tap outside cancels too). Removing the station that is playing stops
+it and clears the selection, and the question says so.
 
 #### On the SD card
 
@@ -684,9 +691,9 @@ Threads come from `src/os/os_port.c` (Win32 in the simulator, POSIX threads on
 ESP-IDF), and the connection from `http_stream.c`. As the directory asks of its
 clients, starting a station also tells it about the play (`/json/url/<uuid>`).
 
-Names render only in the characters the built-in Montserrat fonts carry, which
-are ASCII: a station named in Greek or another script shows gaps until a font
-with those glyphs is added.
+Names render in the UI text fonts (`ui_font_text_*`, see `ui_theme.h`): Latin
+with its European accents, Cyrillic and Greek. A name in a script they lack --
+CJK, Arabic, Hebrew, emoji -- shows placeholder boxes for those characters.
 
 ### Devices
 
@@ -943,7 +950,8 @@ The Settings page, last in the rail, has four tabs:
   12-hour clock.
 - **Device**: brightness and idle brightness, each automatic or a level;
   dark or light theme, accent colour, and how soon the ambient clock takes
-  over; then language (English only so far) and °C or °F.
+  over; then language (English only so far), °C or °F, and the languages the
+  keyboard offers.
 
 Brightness belongs to the backlight alone. Nothing on screen is drawn
 differently at any level. Idle brightness applies while the ambient clock face
@@ -956,6 +964,39 @@ used when their button is pressed, so a half-typed password never drops a
 working connection, and a Wi-Fi network is only stored once it has been
 joined. Tapping a text field brings up an on-screen keyboard, and the tab
 scrolls the field clear of it.
+
+Every keyboard comes from `ui_keyboard_create()` and is given its field with
+`ui_keyboard_attach()`, which also says what the field takes: text typed as
+keyed, sentences, or a number. It is LVGL's keyboard -- one button matrix,
+however many keys -- made to work like Android's Gboard:
+
+- Gboard's letter layouts for English, Greek, German, French, Spanish, Russian
+  and Ukrainian. English is always on, since networks, brokers and topics are
+  typed in it; the others are ticked in a panel of checkboxes opened from
+  "Keyboard languages" on the Device tab, stored as
+  `"keyboards": ["en", "el"]`. With more than one on, the globe key goes on to
+  the next. The space bar names the language in use, and every keyboard
+  follows it.
+- Shift capitalises the next letter. Tapped twice, it locks capitals, with a
+  bar under the arrow.
+- Holding a key opens its alternatives above it -- the number on a top-row key
+  (shown in its corner), accented letters, more punctuation on the full stop
+  -- to pick by sliding onto one and letting go.
+- A preview of the key shows above the finger, and sliding onto another key
+  before letting go types that one instead.
+- Sliding along the space bar moves the cursor.
+- Two symbol pages, `?123` and `=\<`, as Gboard's, back to the letters after a
+  space; a phone number pad for number fields (the MQTT port).
+- In sentence fields (an alarm's name), a capital starts each sentence, and a
+  second space straight after a word becomes a full stop.
+- Enter is the accent colour, a tick for one-line fields; a hide key closes
+  the keyboard without it.
+
+Hints, the space bar's language, Shift's state and Enter are drawn onto the
+keys as the button matrix draws them, and the preview and the pop-up are small
+objects on the top layer, made when needed -- none of it adds objects per key.
+A language is three strings of letters in `ui_keyboard.c`, and holding a key
+offers the same alternatives in every layout.
 
 The settings are plain C in `src/settings/` and are stored as JSON with cJSON,
 like the device configuration, so the same code serves the simulator and the
@@ -972,6 +1013,7 @@ still loads. `ui_settings_feed.c` loads and stores them and applies each one:
 | Brightness, idle brightness | the backlight; a logged hook in the simulator |
 | Ambient clock after | `ui_set_idle_timeout()` |
 | Temperature unit, language | stored for the weather service and translations to use |
+| Keyboard languages | `ui_keyboard_set_languages()` |
 
 #### Changing the theme without a restart
 
@@ -991,7 +1033,8 @@ new pages what it last told the old ones (`ui_clock_feed_refresh()`,
 deferred with `lv_async_call()`, because the tap that asked for it lands on a
 button the rebuild deletes. `ui_theme_set()` also re-initialises LVGL's default
 theme, for the parts of stock widgets that no page styles: keyboard keys and
-dropdown lists.
+dropdown lists. It is given `UI_FONT_XS`, so those show the same letters as
+the rest of the UI.
 
 A page that holds state only in its widgets loses it in a rebuild. Keep such
 state in the page's statics, or behind a feed, as the alarms, devices and
@@ -1179,9 +1222,13 @@ sibling. Otherwise, at 0 or 100, the knob covers the neighbouring label.
 
 Two things worth knowing:
 
-- **Only `0x20-0x7F`, `0xB0` and `0x2022` exist** in the built-in Montserrat
-  fonts. Use `UI_DEG` and `UI_BULLET` for the latter two; there is no micro
-  sign or superscript, so write `ug/m3`, not the typographic form.
+- **The text sizes are not the built-in fonts.** `UI_FONT_XS` to `UI_FONT_XL`
+  are Montserrat cut with Latin-1, Latin Extended-A, Cyrillic, Greek and
+  typographic punctuation (`src/ui/fonts/ui_font_text_*.c`; ranges and the
+  command to regenerate are in `ui_theme.h`). Their `LV_SYMBOL_*` icons come
+  from the built-in Montserrat of the same size, as a fallback. `UI_FONT_CLOCK`
+  is still the built-in 48 px, with only ASCII, `UI_DEG` and `UI_BULLET`.
+  Sources are compiled as UTF-8 (`/utf-8` on MSVC).
 - **`LV_LABEL_LONG_MODE_DOTS` ellipsises on vertical overflow**, not
   horizontal. A label left at `LV_SIZE_CONTENT` height just grows to a second
   line and never shows dots. Use `ui_label_single_line(label, font)`, which

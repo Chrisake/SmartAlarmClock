@@ -19,6 +19,9 @@
 /** Length of the ambient <-> active transition. */
 #define TRANSITION_MS 450
 
+/** Widest the next alarm's name gets on its chip before it ends in dots. */
+#define ALARM_NAME_MAX_WIDTH 320
+
 /** Height of the precipitation graph's plot area. */
 #define RAIN_PLOT_HEIGHT 140
 
@@ -756,6 +759,10 @@ static void clock_block_create(lv_obj_t * parent)
 
     ui_label_create(alarm_chip, LV_SYMBOL_BELL, UI_FONT_SM, UI_COLOR_ACCENT);
     alarm_name = ui_label_create(alarm_chip, "", UI_FONT_SM, UI_COLOR_ACCENT);
+    /*A name can run to PAGE_ALARMS_NAME_CHARS: past this it ends in dots
+     *rather than pushing the time off the chip.*/
+    lv_obj_set_style_max_width(alarm_name, ALARM_NAME_MAX_WIDTH, LV_PART_MAIN);
+    ui_label_single_line(alarm_name, UI_FONT_SM);
     alarm_time = ui_label_create(alarm_chip, "", UI_FONT_SM, UI_COLOR_ACCENT);
     alarm_when = ui_label_create(alarm_chip, "", UI_FONT_SM, UI_COLOR_TEXT_DIM);
 }

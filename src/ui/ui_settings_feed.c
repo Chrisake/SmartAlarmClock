@@ -13,6 +13,7 @@
 #include "ui/ui_devices_feed.h"
 #include "ui/ui_air_feed.h"
 #include "ui/ui_weather_feed.h"
+#include "ui/ui_keyboard.h"
 #include "ui/pages/clock/page_clock.h"
 #include "ui/pages/settings/page_settings.h"
 #include "net/mqtt_client.h"
@@ -119,6 +120,7 @@ void ui_settings_feed_load(void)
     settings_set(&settings);
     clock_time_set_zone(settings.timezone_posix);
     ui_theme_set(settings.theme == SETTINGS_THEME_LIGHT ? UI_THEME_LIGHT : UI_THEME_DARK, settings.accent);
+    ui_keyboard_set_languages(settings.keyboards);
 }
 
 void ui_settings_feed_init(void)
@@ -356,6 +358,7 @@ static void changed(const settings_t * edited)
     /*The forecasts follow the location and the units; the sensors' readings the units.*/
     ui_weather_feed_settings_changed(&before, &after);
     if(before.fahrenheit != after.fahrenheit) ui_air_feed_republish();
+    if(before.keyboards != after.keyboards) ui_keyboard_set_languages(after.keyboards);
 
     bool zone_changed = strcmp(before.timezone_posix, after.timezone_posix) != 0;
     bool retime       = zone_changed || before.show_seconds != after.show_seconds;

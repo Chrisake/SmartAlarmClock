@@ -59,6 +59,13 @@ int main(int argc, char **argv)
   (void)argc; /*Unused*/
   (void)argv; /*Unused*/
 
+#ifdef _WIN32
+  /*The logs are UTF-8 -- alarm and station names in any language -- but a
+   *Windows console shows bytes in its own code page unless told otherwise.
+   *On the clock the ESP-IDF monitor already reads UTF-8.*/
+  SetConsoleOutputCP(CP_UTF8);
+#endif
+
   /*Initialize LVGL*/
   lv_init();
 

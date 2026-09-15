@@ -51,8 +51,17 @@ extern "C" {
  */
 #define PAGE_ALARMS_MAX 32
 
-/** Longest label an alarm can carry, including the terminator. */
-#define PAGE_ALARMS_NAME_LEN 24
+/** Longest label an alarm can carry, in characters. The name field takes no
+ *  more than this as it is typed. */
+#define PAGE_ALARMS_NAME_CHARS 64
+
+/**
+ * Bytes to hold that label, including the terminator. Two a character: every
+ * letter the keyboards type -- accented Latin, Greek, Cyrillic -- is one or two
+ * bytes of UTF-8, so a full-length name fits in any of them. A name full of
+ * three-byte symbols (€, “, …) is cut short, at a character boundary.
+ */
+#define PAGE_ALARMS_NAME_LEN (PAGE_ALARMS_NAME_CHARS * 2 + 1)
 
 /** A radio station's UUID, including the terminator. */
 #define PAGE_ALARMS_STATION_LEN 37

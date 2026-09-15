@@ -9,7 +9,9 @@
 #include "ui/ui_format.h"
 #include "settings/settings.h"
 
+#include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 /**********************
  *  STATIC VARIABLES
@@ -135,4 +137,20 @@ const char * ui_format_month(int month, bool abbreviated)
 {
     month = ((month % 12) + 12) % 12;
     return abbreviated ? months_short[month] : months[month];
+}
+
+void ui_format_text_copy(char * buf, size_t size, const char * text)
+{
+    if(size == 0) return;
+
+    size_t len = strlen(text);
+    if(len >= size) {
+        /*The first byte left out continues a character begun before it: leave
+         *that whole character out too, back to its first byte.*/
+        len = size - 1;
+        while(len > 0 && ((uint8_t)text[len] & 0xC0) == 0x80) len--;
+    }
+
+    memcpy(buf, text, len);
+    buf[len] = '\0';
 }

@@ -43,6 +43,7 @@ static void rooms_rebuild(void);
 static void room_clicked(lv_event_t * e);
 static void room_select(uint32_t index);
 static void grid_resized(lv_event_t * e);
+static void root_ext_draw_size(lv_event_t * e);
 static void notice_apply(void);
 static void scene_clicked(lv_event_t * e);
 
@@ -239,6 +240,11 @@ static lv_obj_t * create(lv_obj_t * parent)
     lv_obj_set_style_pad_all(root, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_row(root, UI_GAP, LV_PART_MAIN);
     lv_obj_set_scrollable(root, false);
+    /*The tile grid reaches past the page into the padding beside it, for its
+     *scroll bar -- see body_create().*/
+    lv_obj_set_overflow_visible(root, true);
+    lv_obj_add_event_cb(root, root_ext_draw_size, LV_EVENT_REFR_EXT_DRAW_SIZE, NULL);
+    lv_obj_refresh_ext_draw_size(root);
     lv_obj_set_grid_dsc_array(root, grid_cols, grid_rows_no_scene);
 
     header_create(root);
@@ -272,15 +278,27 @@ static void header_create(lv_obj_t * parent)
     lv_obj_set_flex_align(room_bar, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 }
 
+/** The grid's scroll bar runs past the root, so showing or hiding the page
+ *  has to repaint that far too, or the bar never appears -- or stays behind. */
+static void root_ext_draw_size(lv_event_t * e)
+{
+    lv_event_set_ext_draw_size(e, UI_GAP);
+}
+
 static void body_create(lv_obj_t * parent)
 {
     lv_obj_t * body = sh_box_create(parent);
     lv_obj_set_grid_cell(body, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 1, 1);
+    /*One gap wider than the page, into the content area's padding. The grid
+     *pads that gap back as its scroll bar's gutter, so the tiles still end
+     *where the cards above and below do, with the bar beside them.*/
+    lv_obj_set_style_margin_right(body, -UI_GAP, LV_PART_MAIN);
 
     /*Wrapping rows of square tiles; the column count is fixed and the tile
      *size follows the width, see grid_resized().*/
     grid = sh_box_create(body);
     lv_obj_set_size(grid, LV_PCT(100), LV_PCT(100));
+    ui_scrollbar_gutter(grid, UI_GAP);
     lv_obj_set_style_pad_row(grid, UI_GAP, LV_PART_MAIN);
     lv_obj_set_style_pad_column(grid, UI_GAP, LV_PART_MAIN);
     lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
@@ -297,7 +315,8 @@ static void body_create(lv_obj_t * parent)
     lv_obj_set_width(notice, LV_PCT(80));
     lv_obj_set_style_text_align(notice, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_long_mode(notice, LV_LABEL_LONG_MODE_WRAP);
-    lv_obj_center(notice);
+    /*Centred on the page, not on the body that reaches past it.*/
+    lv_obj_align(notice, LV_ALIGN_CENTER, -UI_GAP / 2, 0);
 }
 
 static void scenes_create(lv_obj_t * parent)

@@ -128,6 +128,8 @@ void sp_time_now(const struct tm * local);
 /*settings_device.c*/
 void sp_device_create(lv_obj_t * tab);
 void sp_device_values(void);
+/** Close the keyboard languages panel, if it is open. */
+void sp_device_close(void);
 
 #ifdef __cplusplus
 } /*extern "C"*/

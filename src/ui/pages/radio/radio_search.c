@@ -16,6 +16,7 @@
  *********************/
 
 #include "ui/pages/radio/radio_private.h"
+#include "ui/ui_keyboard.h"
 #include "ui/ui_theme.h"
 
 /*********************
@@ -94,6 +95,9 @@ void radio_search_open(void)
     panel = ui_card_create(backdrop);
     lv_obj_set_width(panel, PANEL_WIDTH);
     lv_obj_set_style_pad_row(panel, UI_GAP, LV_PART_MAIN);
+    /*The panel's right padding moves into its children, and into the results
+     *becomes the gutter their scroll bar runs in, clear of the + buttons.*/
+    lv_obj_set_style_pad_right(panel, 0, LV_PART_MAIN);
     lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, UI_GAP);
 
     /*[Name|Tag|Country] [field ..........] [x]*/
@@ -102,6 +106,7 @@ void radio_search_open(void)
     lv_obj_set_style_bg_opa(head, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(head, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(head, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(head, UI_PAD, LV_PART_MAIN);
     lv_obj_set_style_pad_column(head, UI_GAP, LV_PART_MAIN);
     lv_obj_set_scrollable(head, false);
     lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
@@ -165,6 +170,7 @@ void radio_search_open(void)
 
     status_label = ui_label_create(panel, "", UI_FONT_SM, UI_COLOR_TEXT_DIM);
     lv_obj_set_width(status_label, LV_PCT(100));
+    lv_obj_set_style_pad_right(status_label, UI_PAD, LV_PART_MAIN);
     lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_hidden(status_label, true);
 
@@ -174,11 +180,12 @@ void radio_search_open(void)
     lv_obj_set_style_bg_opa(results_list, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(results_list, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(results_list, 0, LV_PART_MAIN);
+    ui_scrollbar_gutter(results_list, UI_PAD);
     lv_obj_set_style_pad_row(results_list, 6, LV_PART_MAIN);
     lv_obj_set_flex_flow(results_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scroll_dir(results_list, LV_DIR_VER);
 
-    keyboard = lv_keyboard_create(backdrop);
+    keyboard = ui_keyboard_create(backdrop);
     lv_obj_set_size(keyboard, LV_PCT(100), LV_PCT(KEYBOARD_HEIGHT_PCT));
     lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_event_cb(keyboard, keyboard_ready, LV_EVENT_READY, NULL);
@@ -283,7 +290,7 @@ static void keyboard_show(bool show)
     int32_t covered = show ? screen * KEYBOARD_HEIGHT_PCT / 100 : 0;
 
     lv_obj_set_hidden(keyboard, !show);
-    lv_keyboard_set_textarea(keyboard, show ? field : NULL);
+    ui_keyboard_attach(keyboard, show ? field : NULL, UI_KEYBOARD_TEXT);
 
     if(show) lv_obj_add_state(field, LV_STATE_FOCUSED);
     else lv_obj_remove_state(field, LV_STATE_FOCUSED);

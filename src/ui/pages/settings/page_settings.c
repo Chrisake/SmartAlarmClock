@@ -12,6 +12,7 @@
 
 #include "ui/pages/settings/settings_private.h"
 #include "ui/ui_picker.h"
+#include "ui/ui_keyboard.h"
 
 #include <string.h>
 
@@ -494,6 +495,7 @@ static void on_hide(void)
 {
     keyboard_close();
     ui_picker_close();
+    sp_device_close();
 
     /*Dropped rather than kept: a rebuild follows every change of theme, and a
      *keyboard kept from before would wear the old colours.*/
@@ -518,7 +520,7 @@ static void field_clicked(lv_event_t * e)
     if(lv_obj_has_state(field, LV_STATE_DISABLED)) return;
 
     if(!keyboard) {
-        keyboard = lv_keyboard_create(lv_layer_top());
+        keyboard = ui_keyboard_create(lv_layer_top());
         lv_obj_set_size(keyboard, LV_PCT(100), LV_PCT(KEYBOARD_HEIGHT_PCT));
         lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
         lv_obj_add_event_cb(keyboard, keyboard_done, LV_EVENT_READY, NULL);
@@ -528,8 +530,7 @@ static void field_clicked(lv_event_t * e)
     if(keyboard_field && keyboard_field != field) lv_obj_remove_state(keyboard_field, LV_STATE_FOCUSED);
     keyboard_field = field;
 
-    lv_keyboard_set_mode(keyboard, kind == SP_FIELD_NUMBER ? LV_KEYBOARD_MODE_NUMBER : LV_KEYBOARD_MODE_TEXT_LOWER);
-    lv_keyboard_set_textarea(keyboard, field);
+    ui_keyboard_attach(keyboard, field, kind == SP_FIELD_NUMBER ? UI_KEYBOARD_NUMBER : UI_KEYBOARD_TEXT);
     lv_obj_set_hidden(keyboard, false);
 
     /*Room at the bottom of the tabs to scroll the field clear of the keyboard.*/
@@ -552,7 +553,7 @@ static void keyboard_close(void)
     if(!keyboard) return;
 
     lv_obj_set_hidden(keyboard, true);
-    lv_keyboard_set_textarea(keyboard, NULL);
+    ui_keyboard_attach(keyboard, NULL, UI_KEYBOARD_TEXT);
 
     /*Losing focus is what tells a field to commit what was typed.*/
     lv_obj_t * field = keyboard_field;

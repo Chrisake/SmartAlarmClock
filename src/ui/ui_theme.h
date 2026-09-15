@@ -126,23 +126,60 @@ extern ui_palette_t ui_palette;
 #define UI_COLOR_AQ_HUMIDITY  lv_color_hex(0x9085E9)
 
 /* --- Type scale --------------------------------------------------------
- * Only sizes enabled in lv_conf.h may be used here.
+ * Text is Montserrat Medium, cut into src/ui/fonts/ui_font_text_NN.c with far
+ * more than the ASCII the built-in Montserrat fonts carry, so station names,
+ * places and device names in other languages show. Each size covers:
  *
- * UI_FONT_CLOCK is the largest built-in Montserrat (48 px). On a 7" panel
- * viewed from across a room a bigger face is better; to go larger, generate
- * one with the LVGL font converter, declare it via LV_FONT_CUSTOM_DECLARE in
- * lv_conf.h, and point UI_FONT_CLOCK at it -- nothing else has to change. */
+ *   0x20-0x7E, 0xA0-0x17F   ASCII, Latin-1 and Latin Extended-A: Western,
+ *                           Central and Eastern European, Turkish, Baltic
+ *   0x400-0x45F, 0x490-1    Cyrillic: Russian, Ukrainian (with Ґ), Bulgarian,
+ *                           Serbian
+ *   0x384-0x3CE             modern Greek, from DejaVu Sans -- Montserrat has
+ *                           none, so Greek is a slightly different face
+ *   0x2010-0x2027, 0x20AC   dashes, curly quotes, bullet, ellipsis, euro
+ *   0x2122, 0x2206, 0x221A  ™ ∆ √, and ✓ (0x2713, from DejaVu Sans), for the
+ *                           keyboard's second symbol page
+ *   0xF062, 0xF0AC          Font Awesome's arrow and globe, for the keyboard's
+ *                           Shift and language keys
+ *
+ * Anything else -- CJK, Arabic, Hebrew, emoji -- draws as a placeholder box.
+ * CJK alone would cost megabytes of flash per size.
+ *
+ * The LV_SYMBOL_* icons are not in these fonts: each falls back to the
+ * built-in Montserrat of its size, which has them, so keep those sizes
+ * enabled in lv_conf.h. To regenerate, from lvgl/scripts/built_in_font (which
+ * has both source fonts), for each size NN of 14 16 20 28 34:
+ *
+ *   npx lv_font_conv --no-compress --no-prefilter --bpp 4 --size NN
+ *     --font Montserrat-Medium.ttf
+ *     -r 0x20-0x7E,0xA0-0x17F,0x400-0x45F,0x490-0x491,0x2010-0x2027,0x20AC,
+ *        0x2122,0x2206,0x221A
+ *     --font DejaVuSans.ttf -r 0x384-0x3CE,0x2713
+ *     --font FontAwesome5-Solid+Brands+Regular.woff -r 0xF062,0xF0AC
+ *     --format lvgl --lv-include lvgl/lvgl.h --lv-font-name ui_font_text_NN
+ *     --lv-fallback lv_font_montserrat_NN --force-fast-kern-format
+ *     -o ../../../src/ui/fonts/ui_font_text_NN.c
+ *
+ * UI_FONT_CLOCK stays the built-in 48 px Montserrat, ASCII only: it shows
+ * nothing but times, temperatures and icons. On a 7" panel viewed from across
+ * a room a bigger face is better; to go larger, generate one as above and
+ * point UI_FONT_CLOCK at it -- nothing else has to change. */
+LV_FONT_DECLARE(ui_font_text_14)
+LV_FONT_DECLARE(ui_font_text_16)
+LV_FONT_DECLARE(ui_font_text_20)
+LV_FONT_DECLARE(ui_font_text_28)
+LV_FONT_DECLARE(ui_font_text_34)
+
 #define UI_FONT_CLOCK        (&lv_font_montserrat_48)
-#define UI_FONT_XL           (&lv_font_montserrat_34)
-#define UI_FONT_LG           (&lv_font_montserrat_28)
-#define UI_FONT_MD           (&lv_font_montserrat_20)
-#define UI_FONT_SM           (&lv_font_montserrat_16)
-#define UI_FONT_XS           (&lv_font_montserrat_14)
+#define UI_FONT_XL           (&ui_font_text_34)
+#define UI_FONT_LG           (&ui_font_text_28)
+#define UI_FONT_MD           (&ui_font_text_20)
+#define UI_FONT_SM           (&ui_font_text_16)
+#define UI_FONT_XS           (&ui_font_text_14)
 
 /* --- Glyphs ------------------------------------------------------------
- * The built-in Montserrat fonts are generated over 0x20-0x7F plus 0xB0 and
- * 0x2022 only, so these two are the only non-ASCII characters available.
- * Notably there is no micro sign or superscript three -- write "ug/m3".
+ * Beyond ASCII, UI_FONT_CLOCK has only these two: the degree sign and the
+ * bullet. The text sizes have the ranges above.
  *
  * Spelled as raw UTF-8 byte escapes so the compiler's source-encoding
  * assumptions cannot mangle them. */
@@ -229,6 +266,9 @@ LV_FONT_DECLARE(ui_font_icons_48)
 /* Minimum comfortable finger target on this panel (~170 DPI). */
 #define UI_TOUCH_MIN         56
 
+/* A scroll bar's thickness, when it has a gutter of its own -- see ui_scrollbar_gutter(). */
+#define UI_SCROLLBAR_WIDTH   4
+
 /**********************
  * GLOBAL PROTOTYPES
  **********************/
@@ -286,6 +326,20 @@ lv_obj_t * ui_label_create(lv_obj_t * parent, const char * text, const lv_font_t
  * @param font    the font the label is using; sets the one-line height
  */
 void ui_label_single_line(lv_obj_t * label, const lv_font_t * font);
+
+/**
+ * Give a scrolling list or grid a gutter on its right for its scroll bar.
+ *
+ * LVGL draws the bar inside the object, over whatever reaches its right edge
+ * -- the controls at the end of a row. This pads the object's right side by
+ * `gutter` and centres a UI_SCROLLBAR_WIDTH bar in that padding. Take the same
+ * amount off whatever pads the object on the right, a card's padding say, and
+ * the content keeps its width and position, with the bar beside it.
+ *
+ * @param obj      the scrolling object
+ * @param gutter   width of the gutter, e.g. UI_PAD
+ */
+void ui_scrollbar_gutter(lv_obj_t * obj, int32_t gutter);
 
 /**
  * Create a slider in the standard style: a UI_SLIDER_HEIGHT track, a round

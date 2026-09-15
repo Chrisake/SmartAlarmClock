@@ -16,6 +16,9 @@
  * The settings are read on every call. Text already on screen does not
  * change by itself: after a change of format the UI is rebuilt, and the feeds
  * format their text afresh.
+ *
+ * Also here: copying text a user typed into a fixed buffer without cutting a
+ * character in half.
  */
 
 #ifndef UI_FORMAT_H
@@ -66,6 +69,15 @@ const char * ui_format_weekday(int wday, bool abbreviated);
 
 /** @return   month name for `month` (0 = January), e.g. "September" or "Sep" */
 const char * ui_format_month(int month, bool abbreviated);
+
+/**
+ * Copy UTF-8 text into a buffer. If it does not fit, it is cut short between
+ * characters -- a character split partway shows as garbage.
+ * @param buf    destination, always terminated
+ * @param size   its size in bytes
+ * @param text   the text
+ */
+void ui_format_text_copy(char * buf, size_t size, const char * text);
 
 #ifdef __cplusplus
 } /*extern "C"*/

@@ -8,6 +8,7 @@
 
 #include "ui/pages/alarms/page_alarms.h"
 #include "ui/ui_format.h"
+#include "ui/ui_keyboard.h"
 #include "ui/ui_theme.h"
 
 #include <stdio.h>
@@ -490,7 +491,11 @@ static void editor_view_create(lv_obj_t * parent)
     name_field = lv_textarea_create(name_slot);
     lv_obj_set_width(name_field, LV_PCT(100));
     lv_textarea_set_one_line(name_field, true);
-    lv_textarea_set_max_length(name_field, PAGE_ALARMS_NAME_LEN - 1);
+    /*Counted in characters, not bytes.*/
+    lv_textarea_set_max_length(name_field, PAGE_ALARMS_NAME_CHARS);
+    /*A long name scrolls along with the cursor; a scroll bar would only run
+     *across the bottom of the text.*/
+    lv_obj_set_scrollbar_mode(name_field, LV_SCROLLBAR_MODE_OFF);
     lv_textarea_set_placeholder_text(name_field, "Alarm");
     lv_obj_set_style_bg_color(name_field, UI_COLOR_CARD_ALT, LV_PART_MAIN);
     lv_obj_set_style_border_width(name_field, 0, LV_PART_MAIN);
@@ -550,7 +555,7 @@ static void editor_view_create(lv_obj_t * parent)
     lv_obj_add_event_cb(delete_button, delete_clicked, LV_EVENT_CLICKED, NULL);
 
     /*Only up while the name is being typed.*/
-    keyboard = lv_keyboard_create(editor_view);
+    keyboard = ui_keyboard_create(editor_view);
     lv_obj_set_size(keyboard, LV_PCT(100), LV_PCT(50));
     lv_obj_add_event_cb(keyboard, keyboard_done, LV_EVENT_READY, NULL);
     lv_obj_add_event_cb(keyboard, keyboard_done, LV_EVENT_CANCEL, NULL);
@@ -694,7 +699,7 @@ static void editor_store(page_alarm_t * alarm)
         lv_strlcpy(alarm->station, stations[sound - PAGE_ALARM_TONE_COUNT].uuid, sizeof(alarm->station));
     }
 
-    lv_strlcpy(alarm->name, lv_textarea_get_text(name_field), sizeof(alarm->name));
+    ui_format_text_copy(alarm->name, sizeof(alarm->name), lv_textarea_get_text(name_field));
 
     alarm->days = 0;
     for(uint32_t i = 0; i < 7; i++) {
@@ -800,7 +805,7 @@ static void day_clicked(lv_event_t * e)
 static void name_focused(lv_event_t * e)
 {
     LV_UNUSED(e);
-    lv_keyboard_set_textarea(keyboard, name_field);
+    ui_keyboard_attach(keyboard, name_field, UI_KEYBOARD_SENTENCE);
     lv_obj_set_hidden(keyboard, false);
 }
 

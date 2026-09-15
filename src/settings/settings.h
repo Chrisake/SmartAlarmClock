@@ -21,7 +21,7 @@
  *                  "timezone_auto": true, "timezone": "Europe/Athens",
  *                  "timezone_posix": "EET-2EEST,M3.5.0/3,M10.5.0/4",
  *                  "clock_24h": true, "show_seconds": true, "date_format": "dmy" },
- *     "general": { "language": "en", "fahrenheit": false },
+ *     "general": { "language": "en", "fahrenheit": false, "keyboards": ["en", "el"] },
  *     "location": { "auto": true, "name": "Athens", "latitude": 37.98, "longitude": 23.73 },
  *     "alarms":  { "snooze_minutes": 9, "volume": 80, "ramp_seconds": 30 },
  *     "sensors": { "publish_interval": 60, "temperature_offset": -1.5,
@@ -84,6 +84,19 @@ typedef enum {
     SETTINGS_DATE_COUNT,
 } settings_date_format_t;
 
+/** Input languages the keyboard offers, as bits in settings_t::keyboards.
+ *  Stored by code: "en", "el", "de", "fr", "es", "ru", "uk". */
+typedef enum {
+    SETTINGS_KEYBOARD_EN,   /**< English, always on */
+    SETTINGS_KEYBOARD_EL,   /**< Greek */
+    SETTINGS_KEYBOARD_DE,   /**< German */
+    SETTINGS_KEYBOARD_FR,   /**< French */
+    SETTINGS_KEYBOARD_ES,   /**< Spanish */
+    SETTINGS_KEYBOARD_RU,   /**< Russian */
+    SETTINGS_KEYBOARD_UK,   /**< Ukrainian */
+    SETTINGS_KEYBOARD_COUNT,
+} settings_keyboard_t;
+
 typedef struct {
     /*Wi-Fi*/
     char wifi_ssid[SETTINGS_SSID_LEN];
@@ -119,8 +132,9 @@ typedef struct {
     settings_date_format_t date_format;
 
     /*General*/
-    char language[SETTINGS_LANGUAGE_LEN];   /**< "en"; the only one there is so far */
-    bool fahrenheit;
+    char     language[SETTINGS_LANGUAGE_LEN];   /**< "en"; the only one there is so far */
+    bool     fahrenheit;
+    uint16_t keyboards;                         /**< Bit per settings_keyboard_t; English's always set */
 
     /*Where the forecasts are for. Automatic takes the public IP's location;
      *otherwise the coordinates below, shown under the name beside them.*/

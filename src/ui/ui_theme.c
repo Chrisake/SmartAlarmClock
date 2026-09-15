@@ -126,6 +126,13 @@ void ui_label_single_line(lv_obj_t * label, const lv_font_t * font)
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
 }
 
+void ui_scrollbar_gutter(lv_obj_t * obj, int32_t gutter)
+{
+    lv_obj_set_style_pad_right(obj, gutter, LV_PART_MAIN);
+    lv_obj_set_style_width(obj, UI_SCROLLBAR_WIDTH, LV_PART_SCROLLBAR);
+    lv_obj_set_style_pad_right(obj, LV_MAX(0, (gutter - UI_SCROLLBAR_WIDTH) / 2), LV_PART_SCROLLBAR);
+}
+
 lv_obj_t * ui_slider_create(lv_obj_t * parent, lv_color_t indicator)
 {
     lv_obj_t * slider = lv_slider_create(parent);
@@ -201,8 +208,11 @@ void ui_theme_set(ui_theme_mode_t mode, uint32_t accent)
      *keys, dropdown lists, a text area's cursor -- so it follows along.*/
     lv_display_t * disp = lv_display_get_default();
     if(disp) {
+        /*The theme's font is what stock widgets on the top layer draw in --
+         *keyboard keys among them -- so it has to be one of the text fonts,
+         *with their letters beyond ASCII.*/
         lv_theme_t * theme = lv_theme_default_init(disp, ui_palette.accent, lv_palette_main(LV_PALETTE_RED),
-                                                   mode == UI_THEME_DARK, LV_FONT_DEFAULT);
+                                                   mode == UI_THEME_DARK, UI_FONT_XS);
         lv_display_set_theme(disp, theme);
     }
 }

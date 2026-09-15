@@ -26,6 +26,7 @@ static bool read_double(const cJSON * obj, const char * key, double min, double 
  **********************/
 
 static const char * const date_format_names[SETTINGS_DATE_COUNT] = {"dmy", "mdy", "ymd"};
+static const char * const keyboard_codes[SETTINGS_KEYBOARD_COUNT] = {"en", "el", "de", "fr", "es", "ru", "uk"};
 
 static settings_t current;
 static bool       current_set;
@@ -61,6 +62,7 @@ void settings_defaults(settings_t * s)
 
     strcpy(s->language, "en");
     s->fahrenheit = false;
+    s->keyboards  = 1U << SETTINGS_KEYBOARD_EN;
 
     s->location_auto = true;
 
@@ -117,6 +119,20 @@ bool settings_from_json(const char * json, size_t len, settings_t * out)
     const cJSON * general = cJSON_GetObjectItemCaseSensitive(root, "general");
     read_string(general, "language", out->language, sizeof(out->language));
     read_bool(general, "fahrenheit", &out->fahrenheit);
+
+    /*Codes this build does not know are skipped. English is always kept.*/
+    const cJSON * keyboards = cJSON_GetObjectItemCaseSensitive(general, "keyboards");
+    if(cJSON_IsArray(keyboards)) {
+        const cJSON * code;
+        out->keyboards = 1U << SETTINGS_KEYBOARD_EN;
+        cJSON_ArrayForEach(code, keyboards) {
+            if(!cJSON_IsString(code)) continue;
+            for(uint32_t i = 0; i < SETTINGS_KEYBOARD_COUNT; i++) {
+                if(strcmp(code->valuestring, keyboard_codes[i]) == 0) out->keyboards |= (uint16_t)(1U << i);
+            }
+        }
+    }
+
     /*Where the clock format lived before it had a "time" section of its own.*/
     read_bool(general, "clock_24h", &out->clock_24h);
     read_bool(general, "show_seconds", &out->show_seconds);
@@ -201,6 +217,11 @@ char * settings_to_json(const settings_t * s)
     cJSON * general = cJSON_AddObjectToObject(root, "general");
     cJSON_AddStringToObject(general, "language", s->language);
     cJSON_AddBoolToObject(general, "fahrenheit", s->fahrenheit);
+
+    cJSON * keyboards = cJSON_AddArrayToObject(general, "keyboards");
+    for(uint32_t i = 0; keyboards && i < SETTINGS_KEYBOARD_COUNT; i++) {
+        if(s->keyboards & (1U << i)) cJSON_AddItemToArray(keyboards, cJSON_CreateString(keyboard_codes[i]));
+    }
 
     cJSON * location = cJSON_AddObjectToObject(root, "location");
     cJSON_AddBoolToObject(location, "auto", s->location_auto);

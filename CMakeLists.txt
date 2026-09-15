@@ -212,6 +212,10 @@ target_link_libraries(main ${MAIN_LIBS})
 if (WIN32)
     if (MSVC)
         target_link_options(main PRIVATE "/SUBSYSTEM:CONSOLE")
+        # Sources are UTF-8, as ESP-IDF's GCC assumes: UI strings and the glyph
+        # comments in src/ui/fonts. Otherwise MSVC reads them in the system
+        # code page.
+        target_compile_options(main PRIVATE /utf-8)
     else()
         target_link_options(main PRIVATE "-mconsole")
     endif()
