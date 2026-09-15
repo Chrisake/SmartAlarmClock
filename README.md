@@ -195,11 +195,15 @@ src/ui/
   ui_settings_feed.h / .c     loads, stores and applies settings; simulated
                               Wi-Fi radio and broker connection
   ui_alarm_feed.h / .c        stores the alarms and rings them: screen, tone or
-                              station, volume ramp, snooze
+                              station, volume ramp, snooze, tone preview
   ui_weather_feed.h / .c      Open-Meteo forecasts -> weather page, clock page
                               and the air quality forecast
   ui_air_feed.h / .c          sensors and outdoor air -> air quality page and
                               clock page; readings to MQTT
+  ui_presence_feed.h / .c     face wake while idle -> wakes the screen
+src/presence/                 face_wake: the camera thread counting frames with
+                              a face; face_detector: esp_video + ESP-DL YOLO on
+                              the board, the F key in the simulator
 src/devices/                  device model, JSON configuration, MQTT state hub
                               (plain C, no LVGL)
 src/settings/                 device settings model, JSON load/save, and
@@ -361,9 +365,10 @@ Two alignment details, both easy to trip over:
 
 `page_alarms` holds the list and the editor in one page, swapping between them
 in the same cell. An alarm carries a label, a time, the days it repeats on, an
-enable flag, snooze and a tone; the editor sets all of them with time wheels,
-a row of day toggles, a dropdown of tones and an on-screen keyboard for the
-label.
+enable flag and a sound; the editor sets them with time wheels, a row of day
+toggles, a dropdown of tones and stations with a play button beside it, and an
+on-screen keyboard for the label. Every alarm offers Snooze when it rings, so
+there is no snooze switch per alarm.
 
 `PAGE_ALARMS_MAX` (32) is deliberately invisible. Nothing announces it -- on
 reaching the limit the add button simply goes disabled and greys out, the way
@@ -387,6 +392,12 @@ radio feed hands over with `page_alarms_set_stations()` whenever its list
 changes. An alarm set to a station keeps its tone to fall back on; one whose
 station has since been removed opens in the editor as that tone.
 
+The play button beside the menu plays the tone picked; a station has none. The
+page asks through `page_alarms_set_preview_cb()`, and `ui_alarm_feed` plays the
+tone at the alarm volume -- the radio makes way, as it does for an alarm. It
+stops after eight seconds, or when the button is tapped again, another sound is
+picked, the editor closes, the page is left or an alarm rings.
+
 Working out *which* alarm rings next needs a clock and a calendar, and the page
 has neither. `ui_clock_feed` does it -- see below -- and pushes the answer to
 the clock page with `page_clock_set_next_alarm()`.
@@ -403,7 +414,8 @@ the next occurrence of its time and then switches itself off.
 
 Ringing puts `ui_alarm_screen` up on the top layer, over the navigation rail
 and everything else: a swinging bell, the time, the alarm's name, its repeat
-and sound, and two large buttons, Snooze (when the alarm allows it) and Stop.
+and sound, and large buttons: Snooze and Stop, and between them Stop & Listen
+when the sound is a station.
 The panel is woken out of the ambient face, and activity is reported while it
 rings, so the idle timeout cannot drop back to the ambient face underneath.
 
@@ -416,6 +428,10 @@ time, and an alarm nobody answers stops after 15 minutes. The audio output
 takes one writer at a time, so the radio is stopped before a tone starts, and
 the radio's own volume comes back afterwards.
 
+Stop & Listen ends the alarm but leaves its station playing, as if it had been
+picked on the radio page, at the level the alarm had risen to; the radio page's
+slider moves there. When the station gives way to the tone, the button goes.
+
 Snooze silences the alarm for the snooze time, and meanwhile the clock page's
 chip reads "Snoozed" with the time it rings again. The alarm settings live in
 `data/settings.json`:
@@ -426,13 +442,16 @@ chip reads "Snoozed" with the time it rings again. The alarm settings live in
 
 `page_weather` stacks three cards, top to bottom:
 
-- **Now** -- a large drawn icon and the temperature, the condition with
-  today's high and low, the location and when the forecast was fetched, then
+- **Now** -- the refresh glyph and when the forecast was fetched in the top
+  left corner, over a large drawn icon and the temperature, the condition with
+  today's high and low, and the city; then, from the top on the right,
   feels-like, humidity, chance of rain, wind, sunrise and sunset, the moon
   drawn as it looks with how much of it is lit and whether that is growing,
   and the next new moon.
 - **Next 20 hours** -- `PAGE_WEATHER_HOURS` (10) slots, one every two hours,
-  each with its time, icon, temperature and chance of rain.
+  each with its time, icon, temperature and chance of rain. The card has half
+  the usual padding above and below, which is what lets a slot's four lines
+  fit its height.
 - **Next 7 days** -- `PAGE_WEATHER_DAYS` (7) columns, today first and on a
   tile, each with an icon, chance of rain, and the high over the low joined by
   a vertical range bar.
@@ -452,7 +471,8 @@ blue; anything below stays dim, so the wet slots stand out.
 The service feeds it with plain data and never touches LVGL:
 
 ```c
-page_weather_set_location("Athens", "Updated 10:15 AM");
+page_weather_set_places(names, 3, 0);            /* "Athens", "Paris", "Oslo" */
+page_weather_set_updated("Updated 10:15 AM", false);
 page_weather_set_now(&now);
 page_weather_set_hourly(hours, PAGE_WEATHER_HOURS);
 page_weather_set_daily(days, PAGE_WEATHER_DAYS);
@@ -461,6 +481,14 @@ page_weather_set_daily(days, PAGE_WEATHER_DAYS);
 Temperatures are whole degrees in whatever unit the service works in; the page
 only appends the degree sign. Passing fewer entries than there are slots hides
 the rest.
+
+With more than one city, the city's name is a button with a chevron, and a tap
+opens the list of them, as the air quality page's sensor button does -- the
+clock's own location first, marked with a house, then the cities added in
+Settings. Picking one calls the page's place callback. With only the clock's
+own, the name is plain text. While the page is covered, a city still loading or
+failing to, the same button stays up over the cover in the corner, so a city
+that will not load never traps the page.
 
 #### The weather feed
 
@@ -472,14 +500,29 @@ parsing are plain C in `src/weather/open_meteo.c`, and the answers are read on
 the download worker's thread.
 
 The location comes from the settings or, while they leave it automatic, from
-the public IP's location at ip-api.com:
+the public IP's location at ip-api.com. The other cities the weather page can
+show are listed with it, up to `SETTINGS_PLACES_MAX` (6):
 
-    "location": { "auto": false, "name": "Athens", "latitude": 37.98, "longitude": 23.73 }
+    "location": { "auto": false, "name": "Athens", "latitude": 37.98, "longitude": 23.73,
+                  "places": [ { "name": "Paris", "latitude": 48.86, "longitude": 2.35 } ] }
 
 It fetches at start, then every half hour for the weather and every hour for
 the air quality. A failure is retried after a minute, then after two, doubling
 up to a quarter of an hour. Changing the location, or `fahrenheit`, fetches
 again at once.
+
+A city picked on the weather page has a forecast of its own, fetched when it
+is picked and then on the same schedule, and dropped when another is picked or
+the city is removed. Everything else keeps to the clock's location: the clock
+page's weather section, which names the city small in its top right corner,
+the automatic theme's sunrise and sunset, and the air quality. Times in another
+city's forecast are shown in the clock's own time zone.
+
+Cities are found by name with Open-Meteo's geocoding
+(`open_meteo_search_url()`, `open_meteo_parse_search()`): up to five, best
+first, each with its region and country to tell namesakes apart. The feed
+answers the Settings page's searches, and drops the answer to a search typed
+over by a newer one.
 
 Until the first forecast arrives the page is covered by a spinner, or by what
 went wrong with a Try again button (`page_weather_set_state()`). After that a
@@ -572,6 +615,18 @@ the past week, interpolated onto the chart -- with the temperature and humidity
 from the weather forecast. The forecast strip shows the index now, every three
 hours for the next twelve, and tomorrow's worst hour, with its own refresh.
 
+Under the chart, the times: five across the hour or the day, or the days
+across the week, the last being now, each with a division line up from it. A
+reading's unit decides its value axis. The unit of the most plotted readings
+gets the axis on the left, the next the axis on the right -- the first plotted
+wins a tie -- with the unit over each, since under them the first and last
+times would run into it. Readings sharing an axis share its range, the span of
+all their own widened to even steps (1, 2, 2.5 or 5 times a power of ten), so
+its numbers hold for every trace on it and read 0 5 10 15 20 rather than
+1 5 9 13 16; a reading in a third unit is stretched over the chart on its own
+range, without an axis. `page_air_quality_set_history()` is told the scale
+values come in, so an axis with steps under one shows tenths.
+
 #### Readings over MQTT
 
 Every `publish_interval` seconds the readings since the last message are
@@ -606,7 +661,7 @@ captions. Tapping a station plays it; previous and next step through the list.
 **+** opens a dialog that searches the directory by name, tag or country
 (`/json/stations/search`, most played first, broken stations hidden), with the
 results' favicons; **+** on a result saves it, and a tick marks stations
-already saved. **Edit** slides a remove button and a drag handle onto every
+already saved -- tapping the tick removes the station again, without asking. **Edit** slides a remove button and a drag handle onto every
 station, a row at a time; **Done** folds them away again. Dragging a station by
 its handle moves it through the list live, with a faded copy of the row under
 the finger to show the drag has taken hold. The copy is plain parts faded one
@@ -935,7 +990,7 @@ which is why the curtain is drawn.
 
 ### Settings
 
-The Settings page, last in the rail, has four tabs:
+The Settings page, last in the rail, has five tabs:
 
 - **Wi-Fi**: the connection status, the network name and password with
   Connect, and beside them the networks a scan found. Tapping a network fills
@@ -948,16 +1003,51 @@ The Settings page, last in the rail, has four tabs:
   format (DD/MM, MM/DD or YYYY-MM-DD) and seconds. The date picker's wheels
   follow the date format, and the time picker has an AM/PM wheel only on the
   12-hour clock.
-- **Device**: brightness and idle brightness, each automatic or a level;
-  dark or light theme, accent colour, and how soon the ambient clock takes
-  over; then language (English only so far), °C or °F, and the languages the
-  keyboard offers.
+- **Weather**: automatic location, the default, found from the public IP, or
+  the clock's city typed in; and more cities for the weather page, typed in the
+  same way, each with a button to remove it. A city's name is searched for
+  when Enter is pressed, and the cities found are listed under the field with
+  their region and country; a tap takes one.
+- **Device**: brightness, automatic or a level; always-on display, and its
+  brightness, automatic or a level up to 20 %; dark, light or automatic theme,
+  accent colour, and how soon the clock goes idle; then language (English only
+  so far), °C or °F, and the languages the keyboard offers; and face wake,
+  with 5 or 10 frames a second and 3 to 7 frames in a row.
 
 Brightness belongs to the backlight alone. Nothing on screen is drawn
-differently at any level. Idle brightness applies while the ambient clock face
-is showing. When a brightness is automatic, its slider sets how strongly the
-light sensor moves the backlight instead of a level, and the slider's name
-changes to say so.
+differently at any level. When a brightness is automatic, its slider sets how
+strongly the light sensor moves the backlight instead of a level, and the
+slider's name changes to say so.
+
+#### Idle: always-on display, screen off and face wake
+
+Untouched for the idle time, the clock goes to its ambient face. With
+**always-on display** on, that is what stays up, at the always-on brightness,
+which is never more than `SETTINGS_IDLE_BRIGHTNESS_MAX` (20 %) -- an older,
+brighter setting comes down to it when it loads. Off, the screen goes off
+instead: `ui.c` covers everything with black on the system layer and the
+backlight is turned off. The ambient face stays underneath, so switching
+always-on back on brings it straight back. A touch on the dark screen, an
+alarm ringing, or a face wakes it with `ui_wake()`, which also brings the clock
+out of its ambient face; the touch that wakes it does nothing else. Without
+always-on, the idle time row reads "Screen off after" and the always-on
+brightness rows go.
+
+**Face wake** watches for someone looking at the clock while it is idle.
+`presence/face_wake.c` runs one thread of its own that looks at a camera frame
+5 or 10 times a second through `face_detector.h`, and a face in 3 to 7 frames
+in a row -- the settings say how many -- raises a wake, so a face passing
+through the picture does not count. `ui_presence_feed` starts it only while
+idle with face wake on, stops it otherwise (the thread closes the camera), and
+calls `ui_wake()` on a wake. If the camera will not start, a notice says so.
+
+On the clock, `face_detector_esp.cpp` grabs RGB565 frames from the MIPI-CSI
+camera through esp_video's V4L2 device and runs a small one-class YOLO face
+model -- YOLOv8n-face or YOLO11n trained on WIDER FACE, quantised to int8 with
+ESP-PPQ and flashed to a `face_model` partition -- with ESP-DL, keeping the
+best box over a score threshold. It has not been tried on the board; the file
+lists what to check first. The simulator has no camera: hold **F** in its
+window and `face_detector_sim.c` sees a face in every frame.
 
 Device settings take effect as they change. Wi-Fi and MQTT credentials are only
 used when their button is pressed, so a half-typed password never drops a
@@ -1005,13 +1095,15 @@ still loads. `ui_settings_feed.c` loads and stores them and applies each one:
 
 | Setting | Applied by |
 | --- | --- |
-| Theme, accent | `ui_theme_set()`, then `ui_rebuild()` |
+| Theme, accent | `ui_theme_set()`, then `ui_rebuild()`; the automatic theme is looked at every minute |
 | 24-hour clock, date format | `ui_format`, then `ui_rebuild()`, so every time and date on screen is written again |
 | Seconds | `ui_clock_feed` |
 | Time set by hand, time zone | `clock_time` |
 | Time server | SNTP on the clock |
-| Brightness, idle brightness | the backlight; a logged hook in the simulator |
-| Ambient clock after | `ui_set_idle_timeout()` |
+| Brightness, always-on brightness | the backlight, off while the screen is; a logged hook in the simulator |
+| Idle after, always-on display | `ui_set_idle_timeout()`, `ui_set_always_on()` |
+| Face wake | `ui_presence_feed`, while idle |
+| Location, more cities | `ui_weather_feed`: the forecasts fetched again for a new location; the weather page's list of cities |
 | Temperature unit, language | stored for the weather service and translations to use |
 | Keyboard languages | `ui_keyboard_set_languages()` |
 
@@ -1020,7 +1112,10 @@ still loads. `ui_settings_feed.c` loads and stores them and applies each one:
 The surface, text and accent tokens in `ui_theme.h` (`UI_COLOR_BG`,
 `UI_COLOR_TEXT`, `UI_COLOR_ACCENT`, ...) read from a runtime palette,
 `ui_palette`, which `ui_theme_set()` fills from a dark or light table and the
-chosen accent. Status and identity colours such as good/warn/bad, rain and the
+chosen accent. The automatic theme is light from today's sunrise to its
+sunset where the forecasts are for (`ui_weather_feed_sun_today()`), and
+before there is a forecast from 7:00 to 19:00 local time; the settings feed
+looks every minute and rebuilds the UI when it crosses either. Status and identity colours such as good/warn/bad, rain and the
 calendars are the same in both themes. The weather icons' greys and whites
 follow the theme so they stay visible on a white card.
 

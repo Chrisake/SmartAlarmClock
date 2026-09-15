@@ -55,6 +55,9 @@ extern "C" {
 /** Hourly air quality kept: the past week, today and tomorrow. */
 #define OPEN_METEO_AIR_HOURS (9 * 24)
 
+/** Cities a search by name gives at most, best match first. */
+#define OPEN_METEO_SEARCH_RESULTS 5
+
 /** The public IP's location. Plain HTTP: ip-api.com's free tier has no HTTPS. */
 #define OPEN_METEO_IP_LOCATION_URL "http://ip-api.com/json/?fields=status,message,city,lat,lon"
 
@@ -128,7 +131,8 @@ typedef struct {
 } open_meteo_air_t;
 
 typedef struct {
-    char   name[48];   /**< The city */
+    char   name[48];     /**< The city */
+    char   region[64];   /**< Where it is, e.g. "Île-de-France, France"; empty from the IP's location */
     double latitude;
     double longitude;
 } open_meteo_place_t;
@@ -157,6 +161,22 @@ bool open_meteo_parse_air(const char * json, size_t len, open_meteo_air_t * out)
  * @return   false if it found no location
  */
 bool open_meteo_parse_place(const char * json, size_t len, open_meteo_place_t * out);
+
+/**
+ * Search Open-Meteo's geocoding for the cities with a name, in any script.
+ * @param name   what was typed, e.g. "Paris"; percent-encoded here
+ * @return       false if the URL did not fit
+ */
+bool open_meteo_search_url(const char * name, char * buf, size_t size);
+
+/**
+ * Read the answer to open_meteo_search_url(). Names are cut short, if need
+ * be, between characters rather than inside one.
+ * @param out   receives the cities, best match first
+ * @param max   room in `out`
+ * @return      cities found, 0 for none; -1 if the answer is not a search's
+ */
+int32_t open_meteo_parse_search(const char * json, size_t len, open_meteo_place_t out[], uint32_t max);
 
 /** @return   what a WMO weather code means, e.g. "Partly cloudy"; "" if unknown */
 const char * open_meteo_code_text(int code);

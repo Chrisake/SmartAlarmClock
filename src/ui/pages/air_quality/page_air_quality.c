@@ -9,6 +9,9 @@
 #include "ui/pages/air_quality/page_air_quality.h"
 #include "ui/ui_theme.h"
 
+#include <math.h>
+#include <string.h>
+
 /*********************
  *      DEFINES
  *********************/
@@ -25,6 +28,19 @@
 
 /** Tiles per row. */
 #define TILE_COLUMNS 5
+
+/** The value axes beside the chart: their width, and their ticks -- one on
+ *  each horizontal division line, the top and bottom edges included. */
+#define AXIS_WIDTH    44
+#define AXIS_TICKS    5
+#define AXIS_TEXT_LEN 16
+
+/** Room above and below the plot for the axes' top and bottom labels, which
+ *  are centred on the edges. */
+#define AXIS_LABEL_ROOM 8
+
+/** The time scale under the chart: its ticks and their labels. */
+#define TIME_SCALE_HEIGHT 24
 
 /**********************
  *  STATIC PROTOTYPES
@@ -56,6 +72,11 @@ static void sensor_popup_group_create(lv_obj_t * panel, const char * heading, bo
 static void sensor_option_clicked(lv_event_t * e);
 
 static int32_t    plot_value(page_aq_metric_t metric, int32_t value);
+static lv_obj_t * axis_create(lv_obj_t * parent, lv_scale_mode_t mode);
+static void       axis_style(lv_obj_t * scale);
+static void       axes_update(void);
+static double     axis_step(double span);
+static void       axis_value_text(char * buf, size_t size, double value, double step);
 static lv_color_t metric_color(page_aq_metric_t metric);
 static void       refresh_clicked(lv_event_t * e);
 
@@ -103,7 +124,26 @@ static struct {
     lv_chart_series_t * series;
     int32_t             min;
     int32_t             max;
+    int32_t             scale;      /**< The values are readings times this */
+    int32_t             plot_min;   /**< Drawn at the bottom: `min`, or its axis's shared range */
+    int32_t             plot_max;
+    int32_t             raw[PAGE_AQ_HISTORY_POINTS];   /**< As given, to draw again on a new range */
+    uint32_t            count;
 } metrics[PAGE_AQ_METRIC_COUNT];
+
+/** The value axes, left and right: a unit's scale beside the chart, the unit
+ *  over it, and room under it that keeps the times under the chart. */
+static struct {
+    lv_obj_t *   scale;
+    lv_obj_t *   unit;
+    lv_obj_t *   spacer;
+    char         texts[AXIS_TICKS][AXIS_TEXT_LEN];
+    const char * text_list[AXIS_TICKS + 1];
+} axes[2];
+
+static lv_obj_t *   time_scale;
+static char         time_texts[PAGE_AQ_TIME_LABELS_MAX][AXIS_TEXT_LEN];
+static const char * time_list[PAGE_AQ_TIME_LABELS_MAX + 1];
 
 static struct {
     char name[PAGE_AQ_SENSOR_NAME_LEN + 1];
@@ -176,33 +216,69 @@ void page_air_quality_set_metric(page_aq_metric_t metric, const char * value, co
 {
     if(metric >= PAGE_AQ_METRIC_COUNT) return;
 
+    /*A new unit -- degrees Celsius to Fahrenheit -- can move the axes.*/
+    bool new_unit = strcmp(lv_label_get_text(metrics[metric].unit), unit) != 0;
+
     lv_label_set_text(metrics[metric].value, value);
     lv_label_set_text(metrics[metric].unit, unit);
     lv_obj_set_style_text_color(metrics[metric].value, status, LV_PART_MAIN);
+
+    if(new_unit) axes_update();
 }
 
 void page_air_quality_set_history(page_aq_metric_t metric, const int32_t values[], uint32_t count,
-                                  int32_t min, int32_t max)
+                                  int32_t min, int32_t max, int32_t scale)
 {
     if(metric >= PAGE_AQ_METRIC_COUNT) return;
     if(count > PAGE_AQ_HISTORY_POINTS) count = PAGE_AQ_HISTORY_POINTS;
 
-    metrics[metric].min = min;
-    metrics[metric].max = max;
+    metrics[metric].min   = min;
+    metrics[metric].max   = max;
+    metrics[metric].scale = scale > 0 ? scale : 1;
+    metrics[metric].count = count;
+    lv_memcpy(metrics[metric].raw, values, count * sizeof(values[0]));
 
-    int32_t scaled[PAGE_AQ_HISTORY_POINTS];
-    for(uint32_t i = 0; i < count; i++) {
-        scaled[i] = plot_value(metric, values[i]);
-    }
-
-    lv_chart_set_series_values(chart, metrics[metric].series, scaled, count);
+    /*Its range may move an axis, and so every trace sharing it.*/
+    axes_update();
 }
 
 void page_air_quality_push_sample(page_aq_metric_t metric, int32_t value)
 {
     if(metric >= PAGE_AQ_METRIC_COUNT) return;
 
+    /*Kept for drawing again on a new range, scrolled as the chart scrolls.*/
+    if(metrics[metric].count == PAGE_AQ_HISTORY_POINTS) {
+        lv_memmove(metrics[metric].raw, metrics[metric].raw + 1, (PAGE_AQ_HISTORY_POINTS - 1) * sizeof(int32_t));
+        metrics[metric].count--;
+    }
+    metrics[metric].raw[metrics[metric].count++] = value;
+
     lv_chart_set_next_value(chart, metrics[metric].series, plot_value(metric, value));
+}
+
+void page_air_quality_set_time_labels(const char * const labels[], uint32_t count)
+{
+    if(count > PAGE_AQ_TIME_LABELS_MAX) count = PAGE_AQ_TIME_LABELS_MAX;
+    if(count < 2) {
+        lv_scale_set_label_show(time_scale, false);
+        return;
+    }
+
+    for(uint32_t i = 0; i < count; i++) {
+        lv_strlcpy(time_texts[i], labels[i] ? labels[i] : "", sizeof(time_texts[i]));
+        time_list[i] = time_texts[i];
+    }
+    time_list[count] = NULL;
+
+    lv_scale_set_total_tick_count(time_scale, count);
+    lv_scale_set_major_tick_every(time_scale, 1);
+    lv_scale_set_range(time_scale, 0, (int32_t)count - 1);
+    lv_scale_set_text_src(time_scale, time_list);
+    lv_scale_set_label_show(time_scale, true);
+    lv_obj_invalidate(time_scale);
+
+    /*A vertical division line over each time.*/
+    lv_chart_set_div_line_count(chart, AXIS_TICKS, count);
 }
 
 void page_air_quality_set_plotted(page_aq_metric_t metric, bool plotted)
@@ -412,9 +488,12 @@ static void tiles_card_create(lv_obj_t * parent)
         /*Roughly lines the unit up with the value's baseline.*/
         lv_obj_set_style_pad_bottom(metrics[i].unit, 5, LV_PART_MAIN);
 
-        metrics[i].series = lv_chart_add_series(chart, color, LV_CHART_AXIS_PRIMARY_Y);
-        metrics[i].min    = metric_defaults[i].min;
-        metrics[i].max    = metric_defaults[i].max;
+        metrics[i].series   = lv_chart_add_series(chart, color, LV_CHART_AXIS_PRIMARY_Y);
+        metrics[i].min      = metric_defaults[i].min;
+        metrics[i].max      = metric_defaults[i].max;
+        metrics[i].scale    = 1;
+        metrics[i].plot_min = metrics[i].min;
+        metrics[i].plot_max = metrics[i].max;
         lv_chart_set_all_values(chart, metrics[i].series, LV_CHART_POINT_NONE);
 
         /*PM2.5 is the one worth watching by default.*/
@@ -491,13 +570,42 @@ static void chart_card_create(lv_obj_t * parent)
         range_buttons[i] = btn;
     }
 
-    chart = lv_chart_create(card);
-    lv_obj_set_width(chart, LV_PCT(100));
+    /*Each axis's unit over it, then [value axis] chart [value axis], then the
+     *times under the chart. The units go above: under, the first and last
+     *times, centred on the chart's edges, would run into them.*/
+    lv_obj_t * units_row = transparent_box_create(card);
+    lv_obj_set_width(units_row, LV_PCT(100));
+    lv_obj_set_flex_flow(units_row, LV_FLEX_FLOW_ROW);
+
+    axes[0].unit = ui_label_create(units_row, "", UI_FONT_XS, UI_COLOR_TEXT_DIM);
+    lv_obj_set_hidden(axes[0].unit, true);
+
+    /*Keeps the right unit on the right when the left one is hidden.*/
+    lv_obj_t * units_fill = transparent_box_create(units_row);
+    lv_obj_set_height(units_fill, 1);
+    lv_obj_set_flex_grow(units_fill, 1);
+
+    axes[1].unit = ui_label_create(units_row, "", UI_FONT_XS, UI_COLOR_TEXT_DIM);
+    lv_obj_set_hidden(axes[1].unit, true);
+
+    lv_obj_t * plot_row = transparent_box_create(card);
+    lv_obj_set_width(plot_row, LV_PCT(100));
+    lv_obj_set_flex_grow(plot_row, 1);
+    lv_obj_set_flex_flow(plot_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_ver(plot_row, AXIS_LABEL_ROOM, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(plot_row, 6, LV_PART_MAIN);
+
+    axes[0].scale = axis_create(plot_row, LV_SCALE_MODE_VERTICAL_LEFT);
+
+    chart = lv_chart_create(plot_row);
+    lv_obj_set_size(chart, 0, LV_PCT(100));
     lv_obj_set_flex_grow(chart, 1);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, PAGE_AQ_HISTORY_POINTS);
     lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, PLOT_SCALE);
-    lv_chart_set_div_line_count(chart, 5, 8);
+    lv_chart_set_div_line_count(chart, AXIS_TICKS, 5);
+    /*No padding, so the division lines meet the axes' ticks.*/
+    lv_obj_set_style_pad_all(chart, 0, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(chart, 0, LV_PART_MAIN);
     lv_obj_set_style_line_color(chart, UI_COLOR_BORDER, LV_PART_MAIN);
@@ -507,6 +615,28 @@ static void chart_card_create(lv_obj_t * parent)
     /*Stands in for the traces when every tile is switched off.*/
     chart_hint = ui_label_create(chart, "Tap a reading above to plot it", UI_FONT_SM, UI_COLOR_TEXT_DIM);
     lv_obj_center(chart_hint);
+
+    axes[1].scale = axis_create(plot_row, LV_SCALE_MODE_VERTICAL_RIGHT);
+
+    lv_obj_t * time_row = transparent_box_create(card);
+    lv_obj_set_width(time_row, LV_PCT(100));
+    lv_obj_set_flex_flow(time_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(time_row, 6, LV_PART_MAIN);
+
+    axes[0].spacer = transparent_box_create(time_row);
+    lv_obj_set_size(axes[0].spacer, AXIS_WIDTH, 1);
+    lv_obj_set_hidden(axes[0].spacer, true);
+
+    time_scale = lv_scale_create(time_row);
+    lv_obj_set_size(time_scale, 0, TIME_SCALE_HEIGHT);
+    lv_obj_set_flex_grow(time_scale, 1);
+    lv_scale_set_mode(time_scale, LV_SCALE_MODE_HORIZONTAL_BOTTOM);
+    lv_scale_set_label_show(time_scale, false);
+    axis_style(time_scale);
+
+    axes[1].spacer = transparent_box_create(time_row);
+    lv_obj_set_size(axes[1].spacer, AXIS_WIDTH, 1);
+    lv_obj_set_hidden(axes[1].spacer, true);
 
     range_select(range_current);
 
@@ -685,6 +815,8 @@ static void plot_apply(page_aq_metric_t metric, bool plotted)
         }
     }
     lv_obj_set_hidden(chart_hint, any);
+
+    axes_update();
 }
 
 static void sensor_button_clicked(lv_event_t * e)
@@ -813,14 +945,178 @@ static void sensor_option_clicked(lv_event_t * e)
  */
 static int32_t plot_value(page_aq_metric_t metric, int32_t value)
 {
-    int32_t min = metrics[metric].min;
-    int32_t max = metrics[metric].max;
+    int32_t min = metrics[metric].plot_min;
+    int32_t max = metrics[metric].plot_max;
 
     if(value == LV_CHART_POINT_NONE) return LV_CHART_POINT_NONE;
     if(max <= min) return 0;
 
     int32_t scaled = (int32_t)(((int64_t)value - min) * PLOT_SCALE / ((int64_t)max - min));
     return LV_CLAMP(0, scaled, PLOT_SCALE);
+}
+
+/** A value axis: a vertical scale beside the chart, hidden until it has a unit. */
+static lv_obj_t * axis_create(lv_obj_t * parent, lv_scale_mode_t mode)
+{
+    lv_obj_t * scale = lv_scale_create(parent);
+    lv_obj_set_size(scale, AXIS_WIDTH, LV_PCT(100));
+    lv_scale_set_mode(scale, mode);
+    lv_scale_set_total_tick_count(scale, AXIS_TICKS);
+    lv_scale_set_major_tick_every(scale, 1);
+    lv_scale_set_range(scale, 0, AXIS_TICKS - 1);
+    lv_scale_set_label_show(scale, true);
+    axis_style(scale);
+    lv_obj_set_hidden(scale, true);
+    return scale;
+}
+
+/** Short ticks in the division lines' colour, small dim labels, no spine. */
+static void axis_style(lv_obj_t * scale)
+{
+    lv_obj_set_style_bg_opa(scale, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(scale, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(scale, 0, LV_PART_MAIN);
+    lv_obj_set_style_line_width(scale, 0, LV_PART_MAIN);
+    lv_obj_set_style_length(scale, 4, LV_PART_INDICATOR);
+    lv_obj_set_style_line_width(scale, 1, LV_PART_INDICATOR);
+    lv_obj_set_style_line_color(scale, UI_COLOR_BORDER, LV_PART_INDICATOR);
+    lv_obj_set_style_length(scale, 0, LV_PART_ITEMS);
+    lv_obj_set_style_text_font(scale, UI_FONT_XS, LV_PART_INDICATOR);
+    lv_obj_set_style_text_color(scale, UI_COLOR_TEXT_DIM, LV_PART_INDICATOR);
+}
+
+/**
+ * Give the axes to the units of the plotted traces: the most used on the
+ * left, the next on the right, the first plotted winning a tie. Every trace
+ * in an axis's unit is drawn on the span of all their ranges, so the axis
+ * reads true for each; the rest keep their own. Then every trace is drawn
+ * again on its range.
+ */
+static void axes_update(void)
+{
+    const char * units[PAGE_AQ_METRIC_COUNT];
+    uint32_t     uses[PAGE_AQ_METRIC_COUNT];
+    uint32_t     unit_count = 0;
+    int32_t      axis_of[PAGE_AQ_METRIC_COUNT];
+
+    for(uint32_t i = 0; i < PAGE_AQ_METRIC_COUNT; i++) {
+        axis_of[i] = -1;
+
+        /*The tiles are still being built on the first calls.*/
+        if(!metrics[i].tile || !metrics[i].unit || !lv_obj_has_state(metrics[i].tile, LV_STATE_CHECKED)) continue;
+
+        const char * unit = lv_label_get_text(metrics[i].unit);
+        uint32_t     u    = 0;
+        while(u < unit_count && strcmp(units[u], unit) != 0) u++;
+        if(u == unit_count) {
+            units[unit_count] = unit;
+            uses[unit_count]  = 0;
+            unit_count++;
+        }
+        uses[u]++;
+    }
+
+    int32_t best[2] = {-1, -1};
+    for(uint32_t u = 0; u < unit_count; u++) {
+        if(best[0] < 0 || uses[u] > uses[best[0]]) {
+            best[1] = best[0];
+            best[0] = (int32_t)u;
+        }
+        else if(best[1] < 0 || uses[u] > uses[best[1]]) {
+            best[1] = (int32_t)u;
+        }
+    }
+
+    for(int a = 0; a < 2; a++) {
+        bool shown = best[a] >= 0;
+        lv_obj_set_hidden(axes[a].scale, !shown);
+        lv_obj_set_hidden(axes[a].unit, !shown);
+        lv_obj_set_hidden(axes[a].spacer, !shown);
+        if(!shown) continue;
+
+        const char * unit = units[best[a]];
+        double       low  = HUGE_VAL;
+        double       high = -HUGE_VAL;
+
+        for(uint32_t i = 0; i < PAGE_AQ_METRIC_COUNT; i++) {
+            if(!metrics[i].tile || !lv_obj_has_state(metrics[i].tile, LV_STATE_CHECKED)) continue;
+            if(strcmp(lv_label_get_text(metrics[i].unit), unit) != 0) continue;
+
+            axis_of[i] = a;
+            low        = LV_MIN(low, (double)metrics[i].min / metrics[i].scale);
+            high       = LV_MAX(high, (double)metrics[i].max / metrics[i].scale);
+        }
+
+        /*Widen the span to even steps, so the labels read 0 5 10 15 20
+         *rather than 1 5 9 13 16.*/
+        double step = axis_step(high - low);
+        double top  = high;
+        low         = floor(low / step + 1e-9) * step;
+        while((high = low + step * (AXIS_TICKS - 1)) < top - 1e-9) {
+            step = axis_step(step * (AXIS_TICKS - 1) + step / 2);
+            low  = floor(low / step + 1e-9) * step;
+        }
+
+        for(uint32_t i = 0; i < PAGE_AQ_METRIC_COUNT; i++) {
+            if(axis_of[i] != a) continue;
+            metrics[i].plot_min = (int32_t)lround(low * metrics[i].scale);
+            metrics[i].plot_max = (int32_t)lround(high * metrics[i].scale);
+        }
+
+        lv_label_set_text(axes[a].unit, unit);
+
+        for(int t = 0; t < AXIS_TICKS; t++) {
+            axis_value_text(axes[a].texts[t], sizeof(axes[a].texts[t]), low + step * t, step);
+            axes[a].text_list[t] = axes[a].texts[t];
+        }
+        axes[a].text_list[AXIS_TICKS] = NULL;
+        lv_scale_set_text_src(axes[a].scale, axes[a].text_list);
+        lv_obj_invalidate(axes[a].scale);
+    }
+
+    for(uint32_t i = 0; i < PAGE_AQ_METRIC_COUNT; i++) {
+        if(axis_of[i] < 0) {
+            metrics[i].plot_min = metrics[i].min;
+            metrics[i].plot_max = metrics[i].max;
+        }
+
+        if(!metrics[i].series || metrics[i].count == 0) continue;
+
+        int32_t scaled[PAGE_AQ_HISTORY_POINTS];
+        for(uint32_t p = 0; p < metrics[i].count; p++) scaled[p] = plot_value((page_aq_metric_t)i, metrics[i].raw[p]);
+        lv_chart_set_series_values(chart, metrics[i].series, scaled, metrics[i].count);
+    }
+}
+
+/**
+ * The step between an axis's labels for a span: 1, 2 or 5 times a power of
+ * ten -- 25 and 250 too -- no finer than a tenth, and at least span / (ticks - 1).
+ */
+static double axis_step(double span)
+{
+    static const double nice[] = {1.0, 2.0, 2.5, 5.0, 10.0};
+
+    double rough     = LV_MAX(span, 0.1 * (AXIS_TICKS - 1)) / (AXIS_TICKS - 1);
+    double magnitude = pow(10.0, floor(log10(rough)));
+
+    for(size_t i = 0; i < sizeof(nice) / sizeof(nice[0]); i++) {
+        /*2.5 only where it is still a whole number.*/
+        if(nice[i] == 2.5 && magnitude < 10.0) continue;
+        if(nice[i] * magnitude >= rough - 1e-9) return nice[i] * magnitude;
+    }
+    return 10.0 * magnitude;
+}
+
+/** A value on an axis: whole numbers, or tenths for steps under one. */
+static void axis_value_text(char * buf, size_t size, double value, double step)
+{
+    if(step >= 1.0) {
+        lv_snprintf(buf, size, "%d", (int)lround(value));
+        return;
+    }
+
+    long tenths = lround(value * 10.0);
+    lv_snprintf(buf, size, "%s%ld.%ld", tenths < 0 ? "-" : "", labs(tenths) / 10, labs(tenths) % 10);
 }
 
 /**

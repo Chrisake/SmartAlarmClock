@@ -7,6 +7,7 @@
  *********************/
 
 #include "ui/ui_alarm_feed.h"
+#include "ui/ui.h"
 #include "ui/ui_alarm_screen.h"
 #include "ui/ui_clock_feed.h"
 #include "ui/ui_format.h"
@@ -43,6 +44,9 @@
 /** Where the volume starts, before it rises to the settings' alarm volume. */
 #define RAMP_FROM_PERCENT 5
 
+/** A tone previewed from the alarm editor plays a few rounds, then stops by itself. */
+#define PREVIEW_MS 8000
+
 /** Largest alarms file read. */
 #define ALARMS_MAX_BYTES (16 * 1024)
 
@@ -76,6 +80,10 @@ static void volume_set(int32_t percent);
 
 static void snooze_pressed(void);
 static void stop_pressed(void);
+static void listen_pressed(void);
+
+static void preview_requested(int32_t tone);
+static void preview_end(void);
 
 static void   alarms_changed(const page_alarm_t alarms[], uint32_t count);
 static bool   alarms_load(void);
@@ -109,6 +117,9 @@ static page_alarm_t snoozed_alarm;
 static uint32_t     snooze_start;
 static uint32_t     snooze_ms;
 
+static bool     previewing;
+static uint32_t preview_start;
+
 /**********************
  *   GLOBAL FUNCTIONS
  **********************/
@@ -116,6 +127,7 @@ static uint32_t     snooze_ms;
 void ui_alarm_feed_init(void)
 {
     page_alarms_set_changed_cb(alarms_changed);
+    page_alarms_set_preview_cb(preview_requested);
 
     /*With no file yet the page keeps its examples, stored at the first edit.*/
     if(!alarms_load()) LV_LOG_USER("alarm: no alarms stored yet in " UI_ALARMS_PATH);
@@ -166,6 +178,11 @@ static void tick(lv_timer_t * timer)
     }
 
     if(ringing) ring_update(&now);
+
+    if(previewing && lv_tick_elaps(preview_start) >= PREVIEW_MS) {
+        preview_end();
+        page_alarms_preview_ended();
+    }
 }
 
 static void alarms_check(const struct tm * now)
@@ -212,6 +229,12 @@ static void ring(const page_alarm_t * alarm)
 {
     if(ringing) sound_stop();
 
+    /*The alarm takes the output from a preview.*/
+    if(previewing) {
+        preview_end();
+        page_alarms_preview_ended();
+    }
+
     ringing_alarm = *alarm;
     ringing       = true;
     snoozed       = false;
@@ -220,9 +243,8 @@ static void ring(const page_alarm_t * alarm)
 
     LV_LOG_USER("alarm: \"%s\" is ringing", alarm->name);
 
-    /*Wake the panel: off the ambient face, and so up to its awake brightness.*/
-    lv_display_trigger_activity(lv_display_get_default());
-    if(page_clock_is_ambient()) page_clock_set_ambient(false);
+    /*Wake the panel: on if it was off, off the ambient face, and so up to its awake brightness.*/
+    ui_wake();
 
     const char * station = alarm->station[0] ? page_alarms_station_name(alarm->station) : NULL;
     const char * sound_name = station ? station : page_alarms_tone_name(alarm->tone);
@@ -240,10 +262,10 @@ static void ring(const page_alarm_t * alarm)
     ui_alarm_screen_info_t info = {
         .name           = alarm->name[0] ? alarm->name : "Alarm",
         .detail         = detail,
-        .snooze         = alarm->snooze,
         .snooze_minutes = settings_get()->alarm_snooze_minutes,
+        .listen         = station != NULL,
     };
-    ui_alarm_screen_show(&info, snooze_pressed, stop_pressed);
+    ui_alarm_screen_show(&info, snooze_pressed, stop_pressed, listen_pressed);
 
     struct tm now;
     clock_time_now(&now);
@@ -347,6 +369,7 @@ static void station_failed(void)
                 page_alarms_tone_name(ringing_alarm.tone));
     LV_LOG_WARN("alarm: %s", note);
     ui_alarm_screen_set_note(note);
+    ui_alarm_screen_set_listen(false);
 
     tone_start();
 }
@@ -379,6 +402,58 @@ static void stop_pressed(void)
     ring_end();
 }
 
+/** Stop the alarm but leave its station playing, on the radio as if picked there. */
+static void listen_pressed(void)
+{
+    if(sound == SOUND_STATION) {
+        /*The radio carries on at the level the alarm had reached, and the
+         *radio page's slider says so. Left playing: ring_end() stops nothing.*/
+        ui_radio_feed_set_volume(volume_now);
+        sound = SOUND_NONE;
+    }
+
+    ring_end();
+}
+
+static void preview_requested(int32_t tone)
+{
+    if(tone < 0) {
+        preview_end();
+        return;
+    }
+
+    /*A ringing alarm has the output.*/
+    if(ringing) {
+        page_alarms_preview_ended();
+        return;
+    }
+
+    /*One writer at a time, as for an alarm: the radio makes way.*/
+    if(previewing) tone_player_stop();
+    ui_radio_feed_stop();
+    audio_sink_set_volume(settings_get()->alarm_volume);
+
+    if(!tone_player_start((uint8_t)tone)) {
+        LV_LOG_WARN("alarm: the tone could not be previewed");
+        audio_sink_set_volume(ui_radio_feed_get_volume());
+        previewing = false;
+        page_alarms_preview_ended();
+        return;
+    }
+
+    previewing    = true;
+    preview_start = lv_tick_get();
+}
+
+static void preview_end(void)
+{
+    if(!previewing) return;
+
+    previewing = false;
+    tone_player_stop();
+    audio_sink_set_volume(ui_radio_feed_get_volume());
+}
+
 static void alarms_changed(const page_alarm_t alarms[], uint32_t count)
 {
     alarms_store(alarms, count);
@@ -387,7 +462,9 @@ static void alarms_changed(const page_alarm_t alarms[], uint32_t count)
 
 /**
  * {"alarms": [{"name": "Wake up", "hour": 7, "minute": 0, "days": ["mon", ...],
- *              "enabled": true, "snooze": true, "tone": "radar", "station": ""}]}
+ *              "enabled": true, "tone": "radar", "station": ""}]}
+ *
+ * A "snooze" key from before every alarm offered Snooze is ignored.
  */
 static bool alarms_load(void)
 {
@@ -418,7 +495,6 @@ static bool alarms_load(void)
         const cJSON * minute  = cJSON_GetObjectItemCaseSensitive(item, "minute");
         const cJSON * days    = cJSON_GetObjectItemCaseSensitive(item, "days");
         const cJSON * enabled = cJSON_GetObjectItemCaseSensitive(item, "enabled");
-        const cJSON * snooze  = cJSON_GetObjectItemCaseSensitive(item, "snooze");
         const cJSON * tone    = cJSON_GetObjectItemCaseSensitive(item, "tone");
         const cJSON * station = cJSON_GetObjectItemCaseSensitive(item, "station");
 
@@ -431,7 +507,6 @@ static bool alarms_load(void)
         alarm->hour    = (uint8_t)hour->valueint;
         alarm->minute  = (uint8_t)minute->valueint;
         alarm->enabled = !cJSON_IsBool(enabled) || cJSON_IsTrue(enabled);
-        alarm->snooze  = !cJSON_IsBool(snooze) || cJSON_IsTrue(snooze);
 
         if(cJSON_IsString(name)) ui_format_text_copy(alarm->name, sizeof(alarm->name), name->valuestring);
 
@@ -480,7 +555,6 @@ static void alarms_store(const page_alarm_t alarms[], uint32_t count)
         }
 
         cJSON_AddBoolToObject(item, "enabled", alarm->enabled);
-        cJSON_AddBoolToObject(item, "snooze", alarm->snooze);
 
         lv_strlcpy(tone, page_alarms_tone_name(alarm->tone), sizeof(tone));
         for(char * c = tone; *c; c++) *c = (char)tolower((unsigned char)*c);

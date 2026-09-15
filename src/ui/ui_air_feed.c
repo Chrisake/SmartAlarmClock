@@ -69,6 +69,7 @@ static ui_status_state_t indoor_state(void);
 static void sensors_publish(void);
 static void tiles_publish(void);
 static void chart_publish(void);
+static void time_labels_publish(void);
 static void analysis_publish(void);
 static void readings_state_publish(void);
 static void forecast_publish(void);
@@ -352,8 +353,38 @@ static void chart_publish(void)
         }
 
         page_air_quality_set_history((page_aq_metric_t)i, points, SENSOR_HISTORY_POINTS,
-                                     (int32_t)floorf(low * scale), (int32_t)ceilf(high * scale));
+                                     (int32_t)floorf(low * scale), (int32_t)ceilf(high * scale), tiles[i].scale);
     }
+
+    time_labels_publish();
+}
+
+/**
+ * The times under the chart: five across the hour or the day, eight days
+ * across the week, the last point being now. Its window is the history's.
+ */
+static void time_labels_publish(void)
+{
+    static const uint32_t counts[PAGE_AQ_RANGE_COUNT] = {5, 5, 8};
+
+    uint32_t     count  = counts[range < PAGE_AQ_RANGE_COUNT ? range : PAGE_AQ_RANGE_24H];
+    double       window = sensor_history_window((sensor_range_t)range);
+    time_t       now    = time(NULL);
+    char         texts[PAGE_AQ_TIME_LABELS_MAX][16];
+    const char * labels[PAGE_AQ_TIME_LABELS_MAX];
+
+    for(uint32_t i = 0; i < count; i++) {
+        time_t    at = now - (time_t)(window * (count - 1 - i) / (count - 1));
+        struct tm local;
+        clock_time_local(at, &local);
+
+        if(i == count - 1)                 lv_strlcpy(texts[i], "Now", sizeof(texts[i]));
+        else if(range == PAGE_AQ_RANGE_7D) lv_strlcpy(texts[i], ui_format_weekday(local.tm_wday, true), sizeof(texts[i]));
+        else                               ui_format_time(texts[i], sizeof(texts[i]), local.tm_hour, local.tm_min);
+        labels[i] = texts[i];
+    }
+
+    page_air_quality_set_time_labels(labels, count);
 }
 
 /** The index now, and its low, average, high and trend over the chart's window. */

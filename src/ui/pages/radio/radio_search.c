@@ -8,7 +8,8 @@
  * thing to do is type. Enter searches and puts the keyboard away to give the
  * results the whole height; tapping the field brings it back. Each result has
  * a + that saves it, which becomes a tick once it is saved -- including for
- * stations that were saved before the search.
+ * stations that were saved before the search. Tapping the tick takes the
+ * station off the list again.
  */
 
 /*********************
@@ -69,6 +70,7 @@ static page_radio_search_field_t search_field = PAGE_RADIO_SEARCH_NAME;
 
 static page_radio_search_cb_t search_cb;
 static page_radio_add_cb_t    add_cb;
+static page_radio_result_remove_cb_t remove_cb;
 
 /**********************
  *   GLOBAL FUNCTIONS
@@ -279,6 +281,11 @@ void page_radio_set_add_cb(page_radio_add_cb_t cb)
     add_cb = cb;
 }
 
+void page_radio_set_result_remove_cb(page_radio_result_remove_cb_t cb)
+{
+    remove_cb = cb;
+}
+
 /**********************
  *   STATIC FUNCTIONS
  **********************/
@@ -359,6 +366,13 @@ static void add_clicked(lv_event_t * e)
 {
     uint32_t index = (uint32_t)(lv_uintptr_t)lv_event_get_user_data(e);
 
-    if(index >= PAGE_RADIO_RESULT_MAX || result_added[index]) return;
+    if(index >= PAGE_RADIO_RESULT_MAX) return;
+
+    /*The tick of a saved station undoes the add.*/
+    if(result_added[index]) {
+        if(remove_cb) remove_cb(index);
+        return;
+    }
+
     if(add_cb) add_cb(index);
 }

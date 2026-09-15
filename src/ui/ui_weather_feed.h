@@ -11,6 +11,14 @@
  * often; at once when a refresh button is tapped; and when the location or the
  * units change.
  *
+ * The weather page can be switched to one of the other cities in the settings.
+ * That city's forecast is fetched on its own, on the same schedule, while it
+ * is picked; the clock page, the automatic theme's sunrise and sunset and the
+ * air quality keep to the clock's location.
+ *
+ * It also answers the Weather settings tab's searches for a city by name, from
+ * Open-Meteo's geocoding; only the latest search in each field is answered.
+ *
  * Until the first forecast arrives the pages show a spinner, or why it could
  * not be fetched. After that a failed refresh leaves the last forecast up,
  * its "Updated" line marked, and says so in a notice.
@@ -79,6 +87,12 @@ const char * ui_weather_feed_place(void);
  * @return   false until there is a forecast
  */
 bool ui_weather_feed_outdoor_climate(float * temperature, float * humidity);
+
+/**
+ * Today's sunrise and sunset where the forecasts are for.
+ * @return   false until there is a forecast that has them
+ */
+bool ui_weather_feed_sun_today(time_t * sunrise, time_t * sunset);
 
 #ifdef __cplusplus
 } /*extern "C"*/

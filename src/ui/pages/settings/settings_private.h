@@ -53,6 +53,8 @@ void sp_wifi_connect(const char * ssid, const char * password);
 void sp_mqtt_save(void);
 /** A date or time was applied. */
 void sp_set_time(const struct tm * local);
+/** A city was searched for. */
+void sp_search(page_settings_search_t search, const char * name);
 
 /*page_settings.c: building blocks*/
 
@@ -124,6 +126,14 @@ void sp_mqtt_status(page_settings_link_t link, const char * detail);
 void sp_time_create(lv_obj_t * tab);
 void sp_time_values(void);
 void sp_time_now(const struct tm * local);
+
+/*settings_weather.c*/
+void sp_weather_create(lv_obj_t * tab);
+void sp_weather_values(void);
+void sp_weather_found(page_settings_search_t search, page_settings_found_t state,
+                      const page_settings_place_t places[], uint32_t count);
+/** Kept whether or not the tab is built. */
+void sp_weather_detected(const char * name);
 
 /*settings_device.c*/
 void sp_device_create(lv_obj_t * tab);

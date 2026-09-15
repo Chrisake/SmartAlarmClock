@@ -28,6 +28,9 @@
 /** Size of the day toggles. */
 #define DAY_BUTTON_SIZE 46
 
+/** The play button beside the sound menu. */
+#define PREVIEW_SIZE 44
+
 /** Index meaning "the editor is creating a new alarm" rather than editing. */
 #define EDITING_NONE UINT32_MAX
 
@@ -78,6 +81,11 @@ static void delete_clicked(lv_event_t * e);
 static void day_clicked(lv_event_t * e);
 static void name_focused(lv_event_t * e);
 static void keyboard_done(lv_event_t * e);
+static void sound_changed(lv_event_t * e);
+static void preview_clicked(lv_event_t * e);
+static void preview_stop(void);
+static void preview_show(void);
+static void on_hide(void);
 
 /**********************
  *  STATIC VARIABLES
@@ -88,7 +96,7 @@ static const ui_page_t desc = {
     .icon    = LV_SYMBOL_BELL,
     .create  = create,
     .on_show = NULL,
-    .on_hide = NULL,
+    .on_hide = on_hide,
 };
 
 static const char * const tone_names[PAGE_ALARM_TONE_COUNT] = {
@@ -100,10 +108,10 @@ static const char * const day_names[7] = {"M", "T", "W", "T", "F", "S", "S"};
 
 /*Enough to show the page doing something before storage exists.*/
 static const page_alarm_t alarm_defaults[] = {
-    {"Wake up",   7,  0, PAGE_ALARM_WEEKDAYS,  true,  true,  PAGE_ALARM_TONE_RADAR},
+    {"Wake up",   7,  0, PAGE_ALARM_WEEKDAYS,  true,  PAGE_ALARM_TONE_RADAR},
     {"Stand-up",  11, 0, PAGE_ALARM_MON | PAGE_ALARM_WED | PAGE_ALARM_FRI,
-                                               true,  false, PAGE_ALARM_TONE_CHIMES},
-    {"Lie-in",    9, 30, PAGE_ALARM_WEEKENDS,  false, true,  PAGE_ALARM_TONE_BIRDSONG},
+                                               true,  PAGE_ALARM_TONE_CHIMES},
+    {"Lie-in",    9, 30, PAGE_ALARM_WEEKENDS,  false, PAGE_ALARM_TONE_BIRDSONG},
 };
 
 static page_alarm_t alarms[PAGE_ALARMS_MAX];
@@ -139,7 +147,11 @@ static lv_obj_t * minute_roller;
 static lv_obj_t * meridiem_roller;
 static lv_obj_t * name_field;
 static lv_obj_t * tone_field;
-static lv_obj_t * snooze_switch;
+static lv_obj_t * preview_button;
+
+/*A tone playing from the play button beside the sound menu.*/
+static bool                     previewing;
+static page_alarms_preview_cb_t preview_cb;
 static lv_obj_t * delete_button;
 static lv_obj_t * keyboard;
 static lv_obj_t * day_buttons[7];
@@ -173,6 +185,17 @@ const page_alarm_t * page_alarms_get_alarms(uint32_t * count)
 void page_alarms_set_changed_cb(page_alarms_changed_cb_t cb)
 {
     changed_cb = cb;
+}
+
+void page_alarms_set_preview_cb(page_alarms_preview_cb_t cb)
+{
+    preview_cb = cb;
+}
+
+void page_alarms_preview_ended(void)
+{
+    previewing = false;
+    preview_show();
 }
 
 void page_alarms_days_text(uint8_t days, char * buf, size_t len)
@@ -535,20 +558,34 @@ static void editor_view_create(lv_obj_t * parent)
     lv_obj_t * tone_slot = field_create(extras, "SOUND");
     lv_obj_set_flex_grow(tone_slot, 1);
 
-    tone_field = lv_dropdown_create(tone_slot);
-    lv_obj_set_width(tone_field, LV_PCT(100));
+    lv_obj_set_width(tone_slot, LV_PCT(100));
+
+    /*The menu, and beside it a button to hear the tone picked. A station has
+     *none: the radio page is where stations are listened to.*/
+    lv_obj_t * tone_row = flow_create(tone_slot, LV_FLEX_FLOW_ROW);
+    lv_obj_set_width(tone_row, LV_PCT(100));
+    lv_obj_set_style_pad_column(tone_row, UI_GAP, LV_PART_MAIN);
+    lv_obj_set_flex_align(tone_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    tone_field = lv_dropdown_create(tone_row);
+    lv_obj_set_width(tone_field, 0);
+    lv_obj_set_flex_grow(tone_field, 1);
     lv_obj_set_style_bg_color(tone_field, UI_COLOR_CARD_ALT, LV_PART_MAIN);
     lv_obj_set_style_border_width(tone_field, 0, LV_PART_MAIN);
     lv_obj_set_style_text_font(tone_field, UI_FONT_SM, LV_PART_MAIN);
+    lv_obj_add_event_cb(tone_field, sound_changed, LV_EVENT_VALUE_CHANGED, NULL);
+
+    preview_button = lv_button_create(tone_row);
+    lv_obj_set_size(preview_button, PREVIEW_SIZE, PREVIEW_SIZE);
+    lv_obj_set_style_radius(preview_button, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(preview_button, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(preview_button, UI_COLOR_CARD_ALT, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(preview_button, UI_COLOR_BORDER, LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_add_event_cb(preview_button, preview_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_center(ui_label_create(preview_button, LV_SYMBOL_PLAY, UI_FONT_MD, UI_COLOR_ACCENT));
+
     sound_options_refresh();
-
-    lv_obj_t * snooze_slot = field_create(extras, "SNOOZE");
-
-    snooze_switch = lv_switch_create(snooze_slot);
-    lv_obj_set_size(snooze_switch, 60, 32);
-    lv_obj_set_style_bg_color(snooze_switch, UI_COLOR_TRACK, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(snooze_switch, UI_COLOR_ACCENT,
-                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+    preview_show();
 
     delete_button = action_button_create(settings, "Delete Alarm", UI_COLOR_BAD);
     lv_obj_set_width(delete_button, LV_PCT(100));
@@ -667,9 +704,6 @@ static void editor_load(const page_alarm_t * alarm)
     lv_textarea_set_text(name_field, alarm->name);
     sound_select(alarm->tone, alarm->station);
 
-    if(alarm->snooze) lv_obj_add_state(snooze_switch, LV_STATE_CHECKED);
-    else              lv_obj_remove_state(snooze_switch, LV_STATE_CHECKED);
-
     for(uint32_t i = 0; i < 7; i++) {
         if(alarm->days & (1 << i)) lv_obj_add_state(day_buttons[i], LV_STATE_CHECKED);
         else                       lv_obj_remove_state(day_buttons[i], LV_STATE_CHECKED);
@@ -686,7 +720,6 @@ static void editor_store(page_alarm_t * alarm)
     if(ui_format_24h()) alarm->hour = (uint8_t)hour;
     else                alarm->hour = (uint8_t)((hour % 12) + (pm ? 12 : 0));
     alarm->minute = (uint8_t)lv_roller_get_selected(minute_roller);
-    alarm->snooze = lv_obj_has_state(snooze_switch, LV_STATE_CHECKED);
 
     uint32_t sound = lv_dropdown_get_selected(tone_field);
     if(sound < PAGE_ALARM_TONE_COUNT) {
@@ -713,7 +746,7 @@ static void editor_open(uint32_t index)
 
     if(index == EDITING_NONE) {
         /*Sensible defaults for a new alarm, as iOS does.*/
-        static const page_alarm_t blank = {"", 7, 0, 0, true, true, PAGE_ALARM_TONE_RADAR};
+        static const page_alarm_t blank = {"", 7, 0, 0, true, PAGE_ALARM_TONE_RADAR};
         editor_load(&blank);
         lv_label_set_text(editor_title, "Add Alarm");
         lv_obj_set_hidden(delete_button, true);
@@ -731,6 +764,7 @@ static void editor_open(uint32_t index)
 
 static void editor_close(void)
 {
+    preview_stop();
     lv_obj_set_hidden(keyboard, true);
     lv_obj_set_hidden(editor_view, true);
     lv_obj_set_hidden(list_view, false);
@@ -815,6 +849,56 @@ static void keyboard_done(lv_event_t * e)
     lv_obj_set_hidden(keyboard, true);
 }
 
+static void sound_changed(lv_event_t * e)
+{
+    LV_UNUSED(e);
+
+    /*Another sound: stop hearing the last, and offer play only for a tone.*/
+    preview_stop();
+    preview_show();
+}
+
+static void preview_clicked(lv_event_t * e)
+{
+    LV_UNUSED(e);
+
+    if(previewing) {
+        preview_stop();
+        return;
+    }
+
+    uint32_t sound = lv_dropdown_get_selected(tone_field);
+    if(sound >= PAGE_ALARM_TONE_COUNT || !preview_cb) return;
+
+    previewing = true;
+    preview_show();
+    preview_cb((int32_t)sound);
+}
+
+static void preview_stop(void)
+{
+    if(!previewing) return;
+
+    previewing = false;
+    preview_show();
+    if(preview_cb) preview_cb(-1);
+}
+
+/** The play button: only beside a tone, and a stop button while the tone plays. */
+static void preview_show(void)
+{
+    if(!preview_button) return;
+
+    bool tone = lv_dropdown_get_selected(tone_field) < PAGE_ALARM_TONE_COUNT;
+    lv_obj_set_hidden(preview_button, !tone);
+    lv_label_set_text(lv_obj_get_child(preview_button, 0), previewing ? LV_SYMBOL_STOP : LV_SYMBOL_PLAY);
+}
+
+static void on_hide(void)
+{
+    preview_stop();
+}
+
 /** Fill the sound menu: the tones, then the saved stations. */
 static void sound_options_refresh(void)
 {
@@ -847,4 +931,5 @@ static void sound_select(uint8_t tone, const char * station)
     }
 
     lv_dropdown_set_selected(tone_field, index);
+    preview_show();
 }

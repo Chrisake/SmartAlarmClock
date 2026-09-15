@@ -89,6 +89,25 @@ void ui_rebuild(void);
  */
 void ui_set_idle_timeout(uint32_t ms);
 
+/**
+ * Choose what idle is: the ambient clock face, or the screen off. Switched on
+ * while the screen is off, the ambient face comes back.
+ * @param always_on   true for the ambient face
+ */
+void ui_set_always_on(bool always_on);
+
+/**
+ * Wake the screen, as a touch does: on if it is off, and the clock page out of
+ * its ambient face. For an alarm, and for a face in front of the camera.
+ */
+void ui_wake(void);
+
+/** @return   true while the screen is off: idle, without always-on display */
+bool ui_is_screen_off(void);
+
+/** @return   true while idle: the ambient clock face up, or the screen off */
+bool ui_is_idle(void);
+
 #ifdef __cplusplus
 } /*extern "C"*/
 #endif

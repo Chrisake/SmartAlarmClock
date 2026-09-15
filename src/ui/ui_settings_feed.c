@@ -38,6 +38,11 @@
 /** Largest settings file the simulator reads. */
 #define SETTINGS_MAX_BYTES (16 * 1024)
 
+/** The automatic theme before there is a forecast to give sunrise and sunset:
+ *  light from 7:00 and dark from 19:00, local time, in minutes of the day. */
+#define AUTO_LIGHT_FROM (7 * 60)
+#define AUTO_DARK_FROM  (19 * 60)
+
 /**********************
  *  STATIC PROTOTYPES
  **********************/
@@ -46,6 +51,8 @@ static char * file_read(const char * path, size_t * len);
 static void   store(void);
 static void   behaviour_apply(void);
 static void   backlight_apply(bool force);
+static ui_theme_mode_t theme_effective(const settings_t * s);
+static void   theme_check(void);
 static bool   zone_detect(settings_t * s);
 
 static void wifi_status(page_settings_link_t link, const char * detail);
@@ -101,6 +108,12 @@ static bool    backlight_known;
 /** Minute last shown on the settings page; -1 when it needs showing again. */
 static int shown_minute = -1;
 
+/** The palette in use, which the automatic theme compares with the time of day. */
+static ui_theme_mode_t theme_applied;
+
+/** Minute the automatic theme was last looked at. */
+static int theme_minute = -1;
+
 /**********************
  *   GLOBAL FUNCTIONS
  **********************/
@@ -119,7 +132,8 @@ void ui_settings_feed_load(void)
 
     settings_set(&settings);
     clock_time_set_zone(settings.timezone_posix);
-    ui_theme_set(settings.theme == SETTINGS_THEME_LIGHT ? UI_THEME_LIGHT : UI_THEME_DARK, settings.accent);
+    theme_applied = theme_effective(&settings);
+    ui_theme_set(theme_applied, settings.accent);
     ui_keyboard_set_languages(settings.keyboards);
 }
 
@@ -205,24 +219,79 @@ static void store(void)
 static void behaviour_apply(void)
 {
     ui_set_idle_timeout((uint32_t)settings_get()->ambient_timeout * 1000U);
+    ui_set_always_on(settings_get()->always_on);
     backlight_apply(false);
 }
 
 /**
- * Set the backlight for what is showing: the idle brightness while the
- * ambient clock face is up, the normal one otherwise. Brightness is the
- * backlight's alone, so nothing is drawn differently.
+ * The palette the theme setting stands for now. Automatic is light from
+ * today's sunrise to its sunset, from the forecast -- or, until there is one,
+ * from AUTO_LIGHT_FROM to AUTO_DARK_FROM.
+ */
+static ui_theme_mode_t theme_effective(const settings_t * s)
+{
+    if(s->theme == SETTINGS_THEME_LIGHT) return UI_THEME_LIGHT;
+    if(s->theme != SETTINGS_THEME_AUTO) return UI_THEME_DARK;
+
+    int light_from = AUTO_LIGHT_FROM;
+    int dark_from  = AUTO_DARK_FROM;
+
+    time_t sunrise, sunset;
+    if(ui_weather_feed_sun_today(&sunrise, &sunset)) {
+        struct tm rise, set;
+        clock_time_local(sunrise, &rise);
+        clock_time_local(sunset, &set);
+        light_from = rise.tm_hour * 60 + rise.tm_min;
+        dark_from  = set.tm_hour * 60 + set.tm_min;
+    }
+
+    struct tm now;
+    clock_time_now(&now);
+    int minute = now.tm_hour * 60 + now.tm_min;
+
+    return minute >= light_from && minute < dark_from ? UI_THEME_LIGHT : UI_THEME_DARK;
+}
+
+/** The automatic theme, once a minute: across sunrise or sunset, the UI is rebuilt in the other palette. */
+static void theme_check(void)
+{
+    const settings_t * s = settings_get();
+    if(s->theme != SETTINGS_THEME_AUTO) return;
+
+    struct tm now;
+    clock_time_now(&now);
+    if(now.tm_min == theme_minute) return;
+    theme_minute = now.tm_min;
+
+    ui_theme_mode_t mode = theme_effective(s);
+    if(mode == theme_applied) return;
+
+    LV_LOG_USER("theme: %s", mode == UI_THEME_LIGHT ? "light, for the day" : "dark, for the night");
+    theme_applied = mode;
+    ui_theme_set(mode, s->accent);
+    lv_async_call(rebuild_async, NULL);
+}
+
+/**
+ * Set the backlight for what is showing: off while the screen is off, the
+ * idle brightness while the ambient clock face is up -- never above
+ * SETTINGS_IDLE_BRIGHTNESS_MAX -- and the normal one otherwise. Brightness is
+ * the backlight's alone, so nothing is drawn differently.
  *
  * TODO: on the clock, drive the BSP's backlight PWM. In automatic mode, read
  * the ambient light sensor and let the level scale how strongly it moves the
- * backlight. The simulator has neither, so it only logs.
+ * backlight, capped at SETTINGS_IDLE_BRIGHTNESS_MAX while idle. The simulator
+ * has neither, so it only logs.
  */
 static void backlight_apply(bool force)
 {
     const settings_t * s         = settings_get();
-    bool               idle      = page_clock_is_ambient();
-    bool               automatic = idle ? s->idle_brightness_auto : s->brightness_auto;
-    uint8_t            level     = idle ? s->idle_brightness : s->brightness;
+    bool               off       = ui_is_screen_off();
+    bool               idle      = off || page_clock_is_ambient();
+    bool               automatic = !off && (idle ? s->idle_brightness_auto : s->brightness_auto);
+    uint8_t            level     = off ? 0 : idle ? s->idle_brightness : s->brightness;
+
+    if(idle && level > SETTINGS_IDLE_BRIGHTNESS_MAX) level = SETTINGS_IDLE_BRIGHTNESS_MAX;
 
     if(!force && backlight_known && idle == backlight_idle && automatic == backlight_auto &&
        level == backlight_level) return;
@@ -232,8 +301,9 @@ static void backlight_apply(bool force)
     backlight_auto  = automatic;
     backlight_level = level;
 
-    LV_LOG_USER("backlight: %s, %s %u%%", idle ? "idle" : "awake",
-                automatic ? "automatic, sensitivity" : "level", (unsigned)level);
+    if(off) LV_LOG_USER("backlight: off");
+    else    LV_LOG_USER("backlight: %s, %s %u%%", idle ? "always-on" : "awake",
+                        automatic ? "automatic, sensitivity" : "level", (unsigned)level);
 }
 
 /**
@@ -362,7 +432,8 @@ static void changed(const settings_t * edited)
 
     bool zone_changed = strcmp(before.timezone_posix, after.timezone_posix) != 0;
     bool retime       = zone_changed || before.show_seconds != after.show_seconds;
-    bool restyle      = before.theme != after.theme || before.accent != after.accent;
+    /*Automatic can stand for the palette already in use.*/
+    bool restyle      = theme_effective(&after) != theme_applied || before.accent != after.accent;
     /*Times and dates are written into every page, so a change of format
      *rebuilds them all -- the same as a change of colours.*/
     bool reformat     = before.clock_24h != after.clock_24h || before.date_format != after.date_format;
@@ -377,7 +448,8 @@ static void changed(const settings_t * edited)
     }
 
     if(restyle) {
-        ui_theme_set(after.theme == SETTINGS_THEME_LIGHT ? UI_THEME_LIGHT : UI_THEME_DARK, after.accent);
+        theme_applied = theme_effective(&after);
+        ui_theme_set(theme_applied, after.accent);
     }
 
     if(restyle || reformat) {
@@ -450,6 +522,7 @@ static void tick(lv_timer_t * timer)
     LV_UNUSED(timer);
 
     backlight_apply(false);
+    theme_check();
 
     if(ui_current_page() != UI_PAGE_SETTINGS) {
         shown_minute = -1;

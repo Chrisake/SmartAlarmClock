@@ -40,6 +40,7 @@ static void       halo_exec(void * obj, int32_t value);
 static void       swing_exec(void * obj, int32_t value);
 static void       snooze_clicked(lv_event_t * e);
 static void       stop_clicked(lv_event_t * e);
+static void       listen_clicked(lv_event_t * e);
 
 /**********************
  *  STATIC VARIABLES
@@ -49,20 +50,24 @@ static lv_obj_t * screen;
 static lv_obj_t * time_label;
 static lv_obj_t * meridiem_label;
 static lv_obj_t * note_label;
+static lv_obj_t * listen_button;
 
 static ui_alarm_screen_cb_t snooze_cb;
 static ui_alarm_screen_cb_t stop_cb;
+static ui_alarm_screen_cb_t listen_cb;
 
 /**********************
  *   GLOBAL FUNCTIONS
  **********************/
 
-void ui_alarm_screen_show(const ui_alarm_screen_info_t * info, ui_alarm_screen_cb_t snooze, ui_alarm_screen_cb_t stop)
+void ui_alarm_screen_show(const ui_alarm_screen_info_t * info, ui_alarm_screen_cb_t snooze, ui_alarm_screen_cb_t stop,
+                          ui_alarm_screen_cb_t listen)
 {
     ui_alarm_screen_hide();
 
     snooze_cb = snooze;
     stop_cb   = stop;
+    listen_cb = listen;
 
     screen = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(screen);
@@ -118,16 +123,25 @@ void ui_alarm_screen_show(const ui_alarm_screen_info_t * info, ui_alarm_screen_c
     lv_obj_set_flex_flow(buttons, LV_FLEX_FLOW_ROW);
     lv_obj_set_clickable(buttons, false);
 
-    if(info->snooze) {
-        char minutes[16];
-        lv_snprintf(minutes, sizeof(minutes), "%u min", (unsigned)info->snooze_minutes);
+    char minutes[16];
+    lv_snprintf(minutes, sizeof(minutes), "%u min", (unsigned)info->snooze_minutes);
 
-        lv_obj_t * snooze_button = button_create(buttons, "Snooze", minutes, false);
-        lv_obj_add_event_cb(snooze_button, snooze_clicked, LV_EVENT_CLICKED, NULL);
-    }
+    lv_obj_t * snooze_button = button_create(buttons, "Snooze", minutes, false);
+    lv_obj_add_event_cb(snooze_button, snooze_clicked, LV_EVENT_CLICKED, NULL);
+
+    listen_button = button_create(buttons, "Stop & Listen", "Keeps the radio on", false);
+    lv_obj_add_event_cb(listen_button, listen_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_hidden(listen_button, !info->listen);
 
     lv_obj_t * stop_button = button_create(buttons, "Stop", NULL, true);
     lv_obj_add_event_cb(stop_button, stop_clicked, LV_EVENT_CLICKED, NULL);
+}
+
+void ui_alarm_screen_set_listen(bool offered)
+{
+    if(!screen || !listen_button) return;
+
+    lv_obj_set_hidden(listen_button, !offered);
 }
 
 void ui_alarm_screen_set_time(const char * time, const char * meridiem)
@@ -153,7 +167,8 @@ void ui_alarm_screen_hide(void)
 
     /*Its own buttons call this, and must not be deleted from under themselves.*/
     lv_obj_delete_async(screen);
-    screen = NULL;
+    screen        = NULL;
+    listen_button = NULL;
 }
 
 /**********************
@@ -277,4 +292,10 @@ static void stop_clicked(lv_event_t * e)
 {
     LV_UNUSED(e);
     if(stop_cb) stop_cb();
+}
+
+static void listen_clicked(lv_event_t * e)
+{
+    LV_UNUSED(e);
+    if(listen_cb) listen_cb();
 }

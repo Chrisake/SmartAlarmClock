@@ -16,7 +16,12 @@
  * ramp time, and an alarm nobody answers stops after a quarter of an hour.
  *
  * Snooze silences it for the settings' snooze time and then rings it again;
- * the clock page's chip shows it snoozed meanwhile. Stop ends it.
+ * the clock page's chip shows it snoozed meanwhile. Stop ends it. Stop &
+ * Listen, offered while a station is what plays, ends it but leaves the
+ * station on, on the radio.
+ *
+ * The alarm editor's play button previews a tone through here too, at the
+ * alarm volume, for a few seconds.
  */
 
 #ifndef UI_ALARM_FEED_H

@@ -107,6 +107,9 @@ typedef void (*page_radio_search_cb_t)(page_radio_search_field_t field, const ch
 /** The user tapped + on search result `index`. */
 typedef void (*page_radio_add_cb_t)(uint32_t index);
 
+/** The user tapped the tick on search result `index`, a saved station: take it off the list. */
+typedef void (*page_radio_result_remove_cb_t)(uint32_t index);
+
 /**********************
  * GLOBAL PROTOTYPES
  **********************/
@@ -233,6 +236,13 @@ void page_radio_set_search_cb(page_radio_search_cb_t cb);
  * @param cb   callback, or NULL to clear
  */
 void page_radio_set_add_cb(page_radio_add_cb_t cb);
+
+/**
+ * Register the callback for a tap on a search result's tick. It removes the
+ * station at once, without the confirmation the list's remove button asks.
+ * @param cb   callback, or NULL to clear
+ */
+void page_radio_set_result_remove_cb(page_radio_result_remove_cb_t cb);
 
 #ifdef __cplusplus
 } /*extern "C"*/

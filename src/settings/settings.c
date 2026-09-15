@@ -45,11 +45,15 @@ void settings_defaults(settings_t * s)
 
     s->brightness_auto      = true;
     s->brightness           = 70;
+    s->always_on            = true;
     s->idle_brightness_auto = true;
-    s->idle_brightness      = 30;
+    s->idle_brightness      = 15;
     s->ambient_timeout      = 240;
     s->theme                = SETTINGS_THEME_DARK;
     s->accent               = 0;
+    s->face_wake            = false;
+    s->face_wake_fps        = SETTINGS_FACE_WAKE_FPS_LOW;
+    s->face_wake_frames     = 4;
 
     s->time_auto     = true;
     strcpy(s->time_server, "pool.ntp.org");
@@ -103,17 +107,30 @@ bool settings_from_json(const char * json, size_t len, settings_t * out)
     const cJSON * display = cJSON_GetObjectItemCaseSensitive(root, "display");
     read_bool(display, "brightness_auto", &out->brightness_auto);
     if(read_int(display, "brightness", SETTINGS_BRIGHTNESS_MIN, 100, &value)) out->brightness = (uint8_t)value;
+    read_bool(display, "always_on", &out->always_on);
     read_bool(display, "idle_brightness_auto", &out->idle_brightness_auto);
+    /*A brighter level from before the limit comes down to it.*/
     if(read_int(display, "idle_brightness", SETTINGS_BRIGHTNESS_MIN, 100, &value)) {
-        out->idle_brightness = (uint8_t)value;
+        out->idle_brightness = (uint8_t)(value > SETTINGS_IDLE_BRIGHTNESS_MAX ? SETTINGS_IDLE_BRIGHTNESS_MAX : value);
     }
     if(read_int(display, "ambient_timeout", 0, 3600, &value)) out->ambient_timeout = (uint16_t)value;
     if(read_int(display, "accent", 0, SETTINGS_ACCENT_COUNT - 1, &value)) out->accent = (uint8_t)value;
+
+    read_bool(display, "face_wake", &out->face_wake);
+    /*Whichever of the two rates is nearer.*/
+    if(read_int(display, "face_wake_fps", SETTINGS_FACE_WAKE_FPS_LOW, SETTINGS_FACE_WAKE_FPS_HIGH, &value)) {
+        out->face_wake_fps = value * 2 >= SETTINGS_FACE_WAKE_FPS_LOW + SETTINGS_FACE_WAKE_FPS_HIGH
+                             ? SETTINGS_FACE_WAKE_FPS_HIGH : SETTINGS_FACE_WAKE_FPS_LOW;
+    }
+    if(read_int(display, "face_wake_frames", SETTINGS_FACE_WAKE_FRAMES_MIN, SETTINGS_FACE_WAKE_FRAMES_MAX, &value)) {
+        out->face_wake_frames = (uint8_t)value;
+    }
 
     const cJSON * theme = display ? cJSON_GetObjectItemCaseSensitive(display, "theme") : NULL;
     if(cJSON_IsString(theme)) {
         if(strcmp(theme->valuestring, "light") == 0)     out->theme = SETTINGS_THEME_LIGHT;
         else if(strcmp(theme->valuestring, "dark") == 0) out->theme = SETTINGS_THEME_DARK;
+        else if(strcmp(theme->valuestring, "auto") == 0) out->theme = SETTINGS_THEME_AUTO;
     }
 
     const cJSON * general = cJSON_GetObjectItemCaseSensitive(root, "general");
@@ -159,6 +176,23 @@ bool settings_from_json(const char * json, size_t len, settings_t * out)
     if(read_double(location, "latitude", -90.0, 90.0, &number))    out->latitude = number;
     if(read_double(location, "longitude", -180.0, 180.0, &number)) out->longitude = number;
 
+    /*A city without a name or with coordinates out of range is skipped.*/
+    const cJSON * places = location ? cJSON_GetObjectItemCaseSensitive(location, "places") : NULL;
+    if(cJSON_IsArray(places)) {
+        const cJSON * entry;
+        cJSON_ArrayForEach(entry, places) {
+            if(out->place_count >= SETTINGS_PLACES_MAX) break;
+
+            settings_place_t place = {0};
+            read_string(entry, "name", place.name, sizeof(place.name));
+            if(place.name[0] == '\0') continue;
+            if(!read_double(entry, "latitude", -90.0, 90.0, &place.latitude)) continue;
+            if(!read_double(entry, "longitude", -180.0, 180.0, &place.longitude)) continue;
+
+            out->places[out->place_count++] = place;
+        }
+    }
+
     const cJSON * alarms = cJSON_GetObjectItemCaseSensitive(root, "alarms");
     if(read_int(alarms, "snooze_minutes", 1, 30, &value)) out->alarm_snooze_minutes = (uint8_t)value;
     if(read_int(alarms, "volume", 10, 100, &value))       out->alarm_volume = (uint8_t)value;
@@ -197,11 +231,16 @@ char * settings_to_json(const settings_t * s)
     cJSON * display = cJSON_AddObjectToObject(root, "display");
     cJSON_AddBoolToObject(display, "brightness_auto", s->brightness_auto);
     cJSON_AddNumberToObject(display, "brightness", s->brightness);
+    cJSON_AddBoolToObject(display, "always_on", s->always_on);
     cJSON_AddBoolToObject(display, "idle_brightness_auto", s->idle_brightness_auto);
     cJSON_AddNumberToObject(display, "idle_brightness", s->idle_brightness);
     cJSON_AddNumberToObject(display, "ambient_timeout", s->ambient_timeout);
-    cJSON_AddStringToObject(display, "theme", s->theme == SETTINGS_THEME_LIGHT ? "light" : "dark");
+    cJSON_AddStringToObject(display, "theme", s->theme == SETTINGS_THEME_LIGHT ? "light"
+                                              : s->theme == SETTINGS_THEME_AUTO ? "auto" : "dark");
     cJSON_AddNumberToObject(display, "accent", s->accent);
+    cJSON_AddBoolToObject(display, "face_wake", s->face_wake);
+    cJSON_AddNumberToObject(display, "face_wake_fps", s->face_wake_fps);
+    cJSON_AddNumberToObject(display, "face_wake_frames", s->face_wake_frames);
 
     cJSON * time = cJSON_AddObjectToObject(root, "time");
     cJSON_AddBoolToObject(time, "auto", s->time_auto);
@@ -228,6 +267,16 @@ char * settings_to_json(const settings_t * s)
     cJSON_AddStringToObject(location, "name", s->location_name);
     cJSON_AddNumberToObject(location, "latitude", s->latitude);
     cJSON_AddNumberToObject(location, "longitude", s->longitude);
+
+    cJSON * places = cJSON_AddArrayToObject(location, "places");
+    for(uint32_t i = 0; places && i < s->place_count && i < SETTINGS_PLACES_MAX; i++) {
+        cJSON * place = cJSON_CreateObject();
+        if(!place) break;
+        cJSON_AddStringToObject(place, "name", s->places[i].name);
+        cJSON_AddNumberToObject(place, "latitude", s->places[i].latitude);
+        cJSON_AddNumberToObject(place, "longitude", s->places[i].longitude);
+        cJSON_AddItemToArray(places, place);
+    }
 
     cJSON * alarms = cJSON_AddObjectToObject(root, "alarms");
     cJSON_AddNumberToObject(alarms, "snooze_minutes", s->alarm_snooze_minutes);

@@ -1,7 +1,24 @@
 #include "hal.h"
 
 #include "board/board.h"
+#include "presence/face_detector.h"
 
+#include <SDL.h>
+
+/*The simulator has no camera: F held down in the window is a face in front
+ *of the clock, for face wake. Told only when F goes down or up.*/
+static void face_key_poll(lv_timer_t * timer)
+{
+  static bool held;
+  LV_UNUSED(timer);
+
+  const Uint8 * keys    = SDL_GetKeyboardState(NULL);
+  bool          pressed = keys && keys[SDL_SCANCODE_F];
+
+  if(pressed == held) return;
+  held = pressed;
+  face_detector_sim_set_present(pressed);
+}
 
 lv_display_t * sdl_hal_init(int32_t w, int32_t h)
 {
@@ -49,6 +66,8 @@ lv_display_t * sdl_hal_init(int32_t w, int32_t h)
   lv_indev_t * kb = lv_sdl_keyboard_create();
   lv_indev_set_display(kb, disp);
   lv_indev_set_group(kb, lv_group_get_default());
+
+  lv_timer_create(face_key_poll, 50, NULL);
 
   return disp;
 }

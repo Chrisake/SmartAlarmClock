@@ -19,6 +19,10 @@
  *   |          automatic time zone, time zone | 24-hour clock,     |
  *   |          date format, seconds                                |
  *   |                                                              |
+ *   |  Weather: automatic location, or a city searched for by name |
+ *   |          | more cities for the weather page, found the same  |
+ *   |          way, each with a button to remove it                |
+ *   |                                                              |
  *   |  Device: brightness and idle brightness (each automatic or   |
  *   |          a level), theme, accent, ambient clock after,       |
  *   |          language, temperature unit                          |
@@ -59,6 +63,9 @@ extern "C" {
 /** Networks the scan list shows. */
 #define PAGE_SETTINGS_NETWORK_MAX 12
 
+/** Cities a search shows at most. */
+#define PAGE_SETTINGS_FOUND_MAX 5
+
 /**********************
  *      TYPEDEFS
  **********************/
@@ -67,9 +74,32 @@ typedef enum {
     PAGE_SETTINGS_TAB_WIFI,
     PAGE_SETTINGS_TAB_MQTT,
     PAGE_SETTINGS_TAB_TIME,
+    PAGE_SETTINGS_TAB_WEATHER,
     PAGE_SETTINGS_TAB_DEVICE,
     PAGE_SETTINGS_TAB_COUNT,
 } page_settings_tab_t;
+
+/** What a search for a city is for. */
+typedef enum {
+    PAGE_SETTINGS_SEARCH_HOME,    /**< The clock's own location, set by hand */
+    PAGE_SETTINGS_SEARCH_EXTRA,   /**< One more city for the weather page */
+    PAGE_SETTINGS_SEARCH_COUNT,
+} page_settings_search_t;
+
+/** Where a search for a city stands. */
+typedef enum {
+    PAGE_SETTINGS_FOUND_BUSY,
+    PAGE_SETTINGS_FOUND_DONE,     /**< The cities given, perhaps none */
+    PAGE_SETTINGS_FOUND_FAILED,
+} page_settings_found_t;
+
+/** A city a search found. */
+typedef struct {
+    const char * name;       /**< e.g. "Paris" */
+    const char * region;     /**< e.g. "Île-de-France, France"; may be empty */
+    double       latitude;
+    double       longitude;
+} page_settings_place_t;
 
 /** State of a Wi-Fi or broker connection, as the status lines show it. */
 typedef enum {
@@ -103,6 +133,14 @@ typedef void (*page_settings_mqtt_cb_t)(const settings_t * settings);
  * @param local   the full local date and time to set: year, month, day, hour, minute
  */
 typedef void (*page_settings_time_cb_t)(const struct tm * local);
+
+/**
+ * A city was searched for on the Weather tab. Answer with
+ * page_settings_set_found(); picking one of them is a settings change.
+ * @param search   which field it was typed in
+ * @param name     what was typed, trimmed of spaces
+ */
+typedef void (*page_settings_search_cb_t)(page_settings_search_t search, const char * name);
 
 /**********************
  * GLOBAL PROTOTYPES
@@ -147,6 +185,24 @@ void page_settings_set_wifi_status(page_settings_link_t link, const char * detai
  * @param detail   e.g. "Connected to broker.local"; NULL for a default per state
  */
 void page_settings_set_mqtt_status(page_settings_link_t link, const char * detail);
+
+/**
+ * Show how a search for a city is going, under the field it was typed in.
+ * @param search   which field
+ * @param state    searching, found (the cities below, perhaps none) or failed
+ * @param places   the cities, best match first; strings are copied
+ * @param count    clamped to PAGE_SETTINGS_FOUND_MAX
+ */
+void page_settings_set_found(page_settings_search_t search, page_settings_found_t state,
+                             const page_settings_place_t places[], uint32_t count);
+
+/**
+ * @param name   where the automatic location found the clock, e.g. "Athens"; NULL while unknown
+ */
+void page_settings_set_detected_place(const char * name);
+
+/** @param cb   called when a city is searched for; NULL to clear */
+void page_settings_set_search_cb(page_settings_search_cb_t cb);
 
 /** @param cb   called on every device or time setting change; NULL to clear */
 void page_settings_set_change_cb(page_settings_change_cb_t cb);

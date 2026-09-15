@@ -227,6 +227,7 @@ static lv_obj_t * weather_temp;
 static lv_obj_t * weather_condition;
 static lv_obj_t * weather_real_feel;
 static lv_obj_t * weather_humidity;
+static lv_obj_t * weather_place;
 static lv_obj_t * weather_status;
 
 static lv_obj_t *          rain_chart;
@@ -328,6 +329,12 @@ void page_clock_set_weather_now(ui_weather_t icon, const char * temp, const char
     lv_label_set_text(weather_condition, condition);
     lv_label_set_text(weather_real_feel, real_feel);
     lv_label_set_text(weather_humidity, humidity);
+}
+
+void page_clock_set_weather_place(const char * name)
+{
+    lv_label_set_text(weather_place, name ? name : "");
+    lv_obj_set_hidden(weather_place, !name || !name[0]);
 }
 
 void page_clock_set_rain(const page_clock_rain_level_t levels[], uint32_t count,
@@ -777,6 +784,15 @@ static void weather_section_create(lv_obj_t * parent)
     /*The whole section is a shortcut into the full forecast.*/
     lv_obj_set_clickable(section, true);
     lv_obj_add_event_cb(section, weather_section_clicked, LV_EVENT_CLICKED, NULL);
+
+    /*Where the forecast is for, small in the top right corner, out of the
+     *stack below.*/
+    weather_place = ui_label_create(section, "", UI_FONT_XS, UI_COLOR_TEXT_DIM);
+    lv_obj_set_floating(weather_place, true);
+    lv_obj_set_style_max_width(weather_place, LV_PCT(50), LV_PART_MAIN);
+    ui_label_single_line(weather_place, UI_FONT_XS);
+    lv_obj_align(weather_place, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_set_hidden(weather_place, true);
 
     /*Conditions first: temperature with the icon, then RealFeel and humidity
      *as a pair of small readouts underneath.*/

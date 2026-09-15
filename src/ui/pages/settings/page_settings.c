@@ -3,7 +3,7 @@
  *
  * The tabs, the on-screen keyboard, and the building blocks every tab is made
  * of. The tabs themselves are in settings_wifi.c, settings_mqtt.c,
- * settings_time.c and settings_device.c.
+ * settings_time.c, settings_weather.c and settings_device.c.
  */
 
 /*********************
@@ -57,8 +57,9 @@ static const ui_page_t desc = {
 static const char * const tab_names[PAGE_SETTINGS_TAB_COUNT] = {
     [PAGE_SETTINGS_TAB_WIFI]   = "Wi-Fi",
     [PAGE_SETTINGS_TAB_MQTT]   = "MQTT",
-    [PAGE_SETTINGS_TAB_TIME]   = "Date & time",
-    [PAGE_SETTINGS_TAB_DEVICE] = "Device",
+    [PAGE_SETTINGS_TAB_TIME]    = "Date & time",
+    [PAGE_SETTINGS_TAB_WEATHER] = "Weather",
+    [PAGE_SETTINGS_TAB_DEVICE]  = "Device",
 };
 
 static bool       built;
@@ -77,6 +78,7 @@ static page_settings_scan_cb_t   scan_cb;
 static page_settings_wifi_cb_t   wifi_cb;
 static page_settings_mqtt_cb_t   mqtt_cb;
 static page_settings_time_cb_t   time_cb;
+static page_settings_search_cb_t search_cb;
 
 /**********************
  *  GLOBAL VARIABLES
@@ -102,6 +104,7 @@ void page_settings_set_values(const settings_t * settings)
     sp_wifi_values();
     sp_mqtt_values();
     sp_time_values();
+    sp_weather_values();
     sp_device_values();
 }
 
@@ -128,6 +131,22 @@ void page_settings_set_wifi_status(page_settings_link_t link, const char * detai
 void page_settings_set_mqtt_status(page_settings_link_t link, const char * detail)
 {
     if(built) sp_mqtt_status(link, detail);
+}
+
+void page_settings_set_found(page_settings_search_t search, page_settings_found_t state,
+                             const page_settings_place_t places[], uint32_t count)
+{
+    if(built && search < PAGE_SETTINGS_SEARCH_COUNT) sp_weather_found(search, state, places, count);
+}
+
+void page_settings_set_detected_place(const char * name)
+{
+    sp_weather_detected(name);
+}
+
+void page_settings_set_search_cb(page_settings_search_cb_t cb)
+{
+    search_cb = cb;
 }
 
 void page_settings_set_change_cb(page_settings_change_cb_t cb)
@@ -184,6 +203,11 @@ void sp_mqtt_save(void)
 void sp_set_time(const struct tm * local)
 {
     if(time_cb) time_cb(local);
+}
+
+void sp_search(page_settings_search_t search, const char * name)
+{
+    if(search_cb) search_cb(search, name);
 }
 
 /*=====================
@@ -477,6 +501,7 @@ static lv_obj_t * create(lv_obj_t * parent)
     sp_wifi_create(tabs[PAGE_SETTINGS_TAB_WIFI]);
     sp_mqtt_create(tabs[PAGE_SETTINGS_TAB_MQTT]);
     sp_time_create(tabs[PAGE_SETTINGS_TAB_TIME]);
+    sp_weather_create(tabs[PAGE_SETTINGS_TAB_WEATHER]);
     sp_device_create(tabs[PAGE_SETTINGS_TAB_DEVICE]);
 
     built = true;

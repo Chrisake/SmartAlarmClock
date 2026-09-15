@@ -98,6 +98,7 @@ file(GLOB_RECURSE DEVICE_SOURCES CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/src/radio/*.c"
     "${PROJECT_SOURCE_DIR}/src/audio/*.c"
     "${PROJECT_SOURCE_DIR}/src/sensors/*.c"
+    "${PROJECT_SOURCE_DIR}/src/presence/*.c"
     "${PROJECT_SOURCE_DIR}/src/weather/*.c")
 if(MSVC)
     # Portable C that also builds with ESP-IDF's GCC; MSVC's _s replacements

@@ -184,6 +184,13 @@ void page_clock_set_weather_now(ui_weather_t icon, const char * temp, const char
                                 const char * real_feel, const char * humidity);
 
 /**
+ * Name the city the weather section's forecast is for, small in its top right
+ * corner.
+ * @param name   e.g. "Athens"; NULL or empty hides it
+ */
+void page_clock_set_weather_place(const char * name);
+
+/**
  * Say whether there is a forecast for the weather section. Until there is,
  * the section shows a spinner, or why not; tapping it still opens the weather
  * page, which offers Try again.

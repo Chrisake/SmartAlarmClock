@@ -1,15 +1,16 @@
 /**
  * @file page_weather.h
  *
- * Weather page: current conditions, the next 20 hours, and the week ahead.
+ * Weather page: current conditions, the next 20 hours, and the week ahead,
+ * for the clock's own location or another city picked here.
  *
  * Layout:
  *
  *   +----------------------------------------------------------------+
- *   |                                        Updated 10:15 (refresh) |
- *   | (icon) 24 deg Partly cloudy | FEELS LIKE HUMIDITY RAIN WIND    |
- *   |               H 27  L 18    | SUNRISE    SUNSET   MOON NEW MOON|
- *   |               Athens        |                                  |
+ *   | (refresh) Updated 10:15       | FEELS LIKE HUMIDITY RAIN WIND   |
+ *   | (icon) 24 deg Partly cloudy   |                                 |
+ *   |               H 27  L 18      | SUNRISE    SUNSET   MOON NEW MOON|
+ *   |               [Athens v]      |                                 |
  *   +----------------------------------------------------------------+
  *   |  2 PM  4 PM  6 PM  8 PM  10 PM  12 AM  2 AM  4 AM  6 AM  8 AM  |
  *   |  (ic)  (ic)  (ic)  (ic)  (ic)   (ic)   (ic)  (ic)  (ic)  (ic)  |
@@ -30,6 +31,11 @@
  * at a glance. The bar's colour runs from cool to warm over that same scale.
  *
  * The first day is taken to be today and is highlighted.
+ *
+ * The city's name under the conditions opens a list of the cities to pick
+ * from, as the air quality page's sensor button does, once there is more than
+ * one. While the page is covered -- a city still loading, or failing to -- the
+ * same button stays up in the corner, so another city can still be picked.
  *
  * Temperatures are whole degrees in whatever unit the weather service uses;
  * the page only appends a degree sign.
@@ -61,6 +67,12 @@ extern "C" {
 
 /** Days in the weekly forecast, today included. */
 #define PAGE_WEATHER_DAYS 7
+
+/** Cities the page can be switched between, the clock's own included. */
+#define PAGE_WEATHER_PLACES_MAX 8
+
+/** Longest city name kept, in bytes with the terminator. */
+#define PAGE_WEATHER_PLACE_LEN 48
 
 /**********************
  *      TYPEDEFS
@@ -110,6 +122,12 @@ typedef struct {
 /** Called when the refresh button, or Try again, is tapped. */
 typedef void (*page_weather_refresh_cb_t)(void);
 
+/**
+ * Called when another city is picked from the list.
+ * @param index   into the names given to page_weather_set_places()
+ */
+typedef void (*page_weather_place_cb_t)(uint32_t index);
+
 /**********************
  * GLOBAL PROTOTYPES
  **********************/
@@ -120,13 +138,20 @@ typedef void (*page_weather_refresh_cb_t)(void);
 const ui_page_t * page_weather_desc(void);
 
 /**
- * Say where the forecast is for, under the conditions, and how fresh it is, in
- * the card's top right corner beside the refresh button.
- * @param location   e.g. "Athens"
+ * Say how fresh the forecast is, in the card's top left corner beside the
+ * refresh button.
  * @param updated    e.g. "Updated 10:15 AM", or NULL for nothing
  * @param stale      the last refresh failed: "Updated" is drawn as a warning
  */
-void page_weather_set_location(const char * location, const char * updated, bool stale);
+void page_weather_set_updated(const char * updated, bool stale);
+
+/**
+ * The cities to pick from, and the one the forecast is for.
+ * @param names      the clock's own location first; copied
+ * @param count      clamped to PAGE_WEATHER_PLACES_MAX; with one, it is only named
+ * @param selected   index of the one shown
+ */
+void page_weather_set_places(const char * const names[], uint32_t count, uint32_t selected);
 
 /**
  * Fill the current-conditions card. Strings are copied.
@@ -162,7 +187,7 @@ void page_weather_set_moon(const page_weather_moon_t * moon);
  * Say whether there is a forecast to show. Until the first one arrives the
  * page is covered: a spinner while it loads, or why it could not be fetched
  * with a button to try again. Once READY, a failed refresh keeps the old
- * forecast up: say so with page_weather_set_location()'s `stale`.
+ * forecast up: say so with page_weather_set_updated()'s `stale`.
  * @param state     loading, ready or failed
  * @param message   why, when failed
  */
@@ -177,6 +202,11 @@ void page_weather_set_refreshing(bool refreshing);
  * @param cb   called when the refresh button or Try again is tapped; NULL to clear
  */
 void page_weather_set_refresh_cb(page_weather_refresh_cb_t cb);
+
+/**
+ * @param cb   called when another city is picked; NULL to clear
+ */
+void page_weather_set_place_cb(page_weather_place_cb_t cb);
 
 #ifdef __cplusplus
 } /*extern "C"*/

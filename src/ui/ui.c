@@ -14,6 +14,7 @@
 #include "ui/ui_radio_feed.h"
 #include "ui/ui_settings_feed.h"
 #include "ui/ui_weather_feed.h"
+#include "ui/ui_presence_feed.h"
 #include "ui/ui_page.h"
 #include "ui/ui_theme.h"
 
@@ -46,6 +47,8 @@ static void        nav_button_clicked(lv_event_t * e);
 static void        idle_timer_cb(lv_timer_t * timer);
 static void        chrome_opa_set(void * obj, int32_t value);
 static void        chrome_show_now(void);
+static void        screen_off_set(bool off);
+static void        screen_off_pressed(lv_event_t * e);
 
 /**********************
  *  STATIC VARIABLES
@@ -65,6 +68,12 @@ static ui_page_id_t current = UI_PAGE_CLOCK;
 
 /** Untouched time before the ambient clock face; 0 = never. Set from settings. */
 static uint32_t idle_timeout_ms = 4 * 60 * 1000;
+
+/** Idle is the ambient face; without, the screen goes off. Set from settings. */
+static bool always_on = true;
+
+/** Over everything while the screen is off; NULL while it is on. */
+static lv_obj_t * screen_off_cover;
 
 /**********************
  *   GLOBAL FUNCTIONS
@@ -115,6 +124,9 @@ void ui_init(void)
 
     /*Applies the rest of the settings and answers the settings page.*/
     ui_settings_feed_init();
+
+    /*Watches for a face while idle, when face wake is on.*/
+    ui_presence_feed_init();
 }
 
 void ui_rebuild(void)
@@ -158,6 +170,29 @@ void ui_rebuild(void)
 void ui_set_idle_timeout(uint32_t ms)
 {
     idle_timeout_ms = ms;
+}
+
+void ui_set_always_on(bool on)
+{
+    always_on = on;
+    if(on) screen_off_set(false);
+}
+
+void ui_wake(void)
+{
+    lv_display_trigger_activity(lv_display_get_default());
+    screen_off_set(false);
+    if(page_clock_is_ambient()) page_clock_set_ambient(false);
+}
+
+bool ui_is_screen_off(void)
+{
+    return screen_off_cover != NULL;
+}
+
+bool ui_is_idle(void)
+{
+    return screen_off_cover != NULL || page_clock_is_ambient();
 }
 
 void ui_set_chrome_hidden(bool hidden)
@@ -314,8 +349,45 @@ static void idle_timer_cb(lv_timer_t * timer)
 
     if(idle_timeout_ms == 0) return;
     if(lv_display_get_inactive_time(NULL) < idle_timeout_ms) return;
-    if(page_clock_is_ambient()) return;
 
-    ui_navigate(UI_PAGE_CLOCK);
-    page_clock_set_ambient(true);
+    if(!page_clock_is_ambient()) {
+        ui_navigate(UI_PAGE_CLOCK);
+        page_clock_set_ambient(true);
+    }
+
+    /*Without always-on display, idle is the screen off -- the ambient face
+     *still underneath, for when always-on comes back.*/
+    if(!always_on) screen_off_set(true);
+}
+
+/**
+ * The screen off: a black cover over everything, on the system layer, that
+ * takes the touch waking it so the touch does nothing else. On the clock the
+ * backlight goes off with it (ui_settings_feed); in the simulator, which has
+ * no backlight, the cover is how the screen shows it is off.
+ */
+static void screen_off_set(bool off)
+{
+    if(off == (screen_off_cover != NULL)) return;
+
+    if(!off) {
+        /*Often from the cover's own press.*/
+        lv_obj_delete_async(screen_off_cover);
+        screen_off_cover = NULL;
+        return;
+    }
+
+    screen_off_cover = lv_obj_create(lv_layer_sys());
+    lv_obj_remove_style_all(screen_off_cover);
+    lv_obj_set_size(screen_off_cover, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(screen_off_cover, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(screen_off_cover, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_clickable(screen_off_cover, true);
+    lv_obj_add_event_cb(screen_off_cover, screen_off_pressed, LV_EVENT_PRESSED, NULL);
+}
+
+static void screen_off_pressed(lv_event_t * e)
+{
+    LV_UNUSED(e);
+    ui_wake();
 }

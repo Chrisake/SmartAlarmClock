@@ -92,6 +92,8 @@ static void station_removed(uint32_t index);
 static void station_moved(uint32_t from, uint32_t to);
 static void search_requested(page_radio_search_field_t field, const char * query);
 static void result_add(uint32_t index);
+static void result_remove(uint32_t index);
+static void saved_remove(uint32_t index);
 
 /**********************
  *  STATIC VARIABLES
@@ -144,6 +146,7 @@ void ui_radio_feed_init(void)
     page_radio_set_move_cb(station_moved);
     page_radio_set_search_cb(search_requested);
     page_radio_set_add_cb(result_add);
+    page_radio_set_result_remove_cb(result_remove);
 
     lv_timer_create(poll_cb, POLL_MS, NULL);
 
@@ -188,6 +191,13 @@ void ui_radio_feed_stop(void)
 int32_t ui_radio_feed_get_volume(void)
 {
     return volume;
+}
+
+void ui_radio_feed_set_volume(int32_t value)
+{
+    volume = LV_CLAMP(0, value, 100);
+    radio_player_set_volume(volume);
+    page_radio_set_volume(volume);
 }
 
 /**********************
@@ -653,6 +663,12 @@ static void volume_changed(int32_t value)
 
 static void station_removed(uint32_t index)
 {
+    saved_remove(index);
+}
+
+/** Take a saved station off the list and the card, stopping it if it is playing. */
+static void saved_remove(uint32_t index)
+{
     if(index >= saved_count) return;
 
     entry_t * entry = saved[index];
@@ -773,4 +789,21 @@ static void result_add(uint32_t index)
     page_radio_search_set_added(index, true);
 
     favicon_fetch(entry);
+}
+
+/** The tick on a result tapped again: the station comes off the list, without asking. */
+static void result_remove(uint32_t index)
+{
+    if(index >= result_count) return;
+
+    int32_t found = saved_find(results[index].info.uuid);
+    if(found < 0) {
+        result_saved[index] = false;
+        page_radio_search_set_added(index, false);
+        return;
+    }
+
+    /*Also clears the result's tick. The page's list is the feed's to change here.*/
+    saved_remove((uint32_t)found);
+    list_publish();
 }

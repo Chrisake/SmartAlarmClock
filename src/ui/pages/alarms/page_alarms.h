@@ -107,8 +107,7 @@ typedef struct {
     uint8_t  minute;           /**< 0..59 */
     uint8_t  days;             /**< Bit set of page_alarm_days_t */
     bool     enabled;
-    bool     snooze;
-    uint8_t  tone;             /**< page_alarm_tone_t; also what plays if `station` cannot */
+    uint8_t  tone;            /**< page_alarm_tone_t; also what plays if `station` cannot */
     char     station[PAGE_ALARMS_STATION_LEN];  /**< Radio station to wake to, by UUID; empty for the tone */
 } page_alarm_t;
 
@@ -120,6 +119,12 @@ typedef struct {
 
 /** Fired after any change, so the application can persist the new set. */
 typedef void (*page_alarms_changed_cb_t)(const page_alarm_t alarms[], uint32_t count);
+
+/**
+ * Play a tone from the editor's play button, or stop it.
+ * @param tone   a page_alarm_tone_t to play, or -1 to stop the one playing
+ */
+typedef void (*page_alarms_preview_cb_t)(int32_t tone);
 
 /**********************
  * GLOBAL PROTOTYPES
@@ -184,6 +189,17 @@ void page_alarms_set_stations(const page_alarm_station_t stations[], uint32_t co
  *               if it is not among them
  */
 const char * page_alarms_station_name(const char * uuid);
+
+/**
+ * Register the callback behind the play button beside the editor's sound
+ * menu, there for tones only. The page asks it to stop whenever the editor
+ * closes, another sound is picked, or the page is left.
+ * @param cb   callback, or NULL to clear
+ */
+void page_alarms_set_preview_cb(page_alarms_preview_cb_t cb);
+
+/** The preview ended by itself, or could not start: the button shows play again. */
+void page_alarms_preview_ended(void);
 
 #ifdef __cplusplus
 } /*extern "C"*/

@@ -45,6 +45,9 @@ extern "C" {
 /** Points held in the history chart. One per pixel column is plenty. */
 #define PAGE_AQ_HISTORY_POINTS 96
 
+/** Most times shown under the chart. */
+#define PAGE_AQ_TIME_LABELS_MAX 8
+
 #define PAGE_AQ_FORECAST_SLOTS 6
 
 /** Most sensors the selector will list. */
@@ -133,18 +136,22 @@ void page_air_quality_set_metric(page_aq_metric_t metric, const char * value, co
 /**
  * Replace one metric's history trace.
  *
- * The metrics have unrelated units, so the chart has no shared y-scale: each
- * trace is stretched over the chart's full height between its own min and
- * max. The trace shapes are comparable; their heights are not.
+ * The metrics have unrelated units, so there is no one y-scale. The chart
+ * gives an axis each to the units of the most plotted traces, two at most --
+ * the left to the most used, the right to the next -- and every trace in such
+ * a unit shares its axis's range, the span of all their ranges, so the axis
+ * reads true for each. Any other trace is stretched over the chart's full
+ * height between its own min and max: its shape is comparable, its height not.
  *
  * @param metric   which trace
  * @param values   array of samples, oldest first; LV_CHART_POINT_NONE for a gap
  * @param count    number of samples, clamped to PAGE_AQ_HISTORY_POINTS
- * @param min      value drawn at the bottom of the chart
- * @param max      value drawn at the top of the chart
+ * @param min      the least the range should reach down to
+ * @param max      the most it should reach up to
+ * @param scale    values, min and max are readings times this, e.g. 10 for tenths
  */
 void page_air_quality_set_history(page_aq_metric_t metric, const int32_t values[], uint32_t count,
-                                  int32_t min, int32_t max);
+                                  int32_t min, int32_t max, int32_t scale);
 
 /**
  * Append one sample to a trace, scrolling it left. Cheaper than re-sending
@@ -154,6 +161,14 @@ void page_air_quality_set_history(page_aq_metric_t metric, const int32_t values[
  * @param value    the new sample
  */
 void page_air_quality_push_sample(page_aq_metric_t metric, int32_t value);
+
+/**
+ * Label the chart's time axis: evenly spaced from its left edge to its right,
+ * with a vertical division line over each.
+ * @param labels   e.g. "3:40 PM" ... "Now"; copied
+ * @param count    2..PAGE_AQ_TIME_LABELS_MAX
+ */
+void page_air_quality_set_time_labels(const char * const labels[], uint32_t count);
 
 /**
  * Add a metric's trace to the chart or remove it, as if its tile was tapped.

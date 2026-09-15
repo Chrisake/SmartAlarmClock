@@ -14,15 +14,17 @@
  *     "mqtt":    { "host": "broker.local", "port": 1883, "tls": false,
  *                  "username": "", "password": "", "client_id": "smartclock",
  *                  "config_topic": "smartclock/config/devices" },
- *     "display": { "brightness_auto": true, "brightness": 70,
- *                  "idle_brightness_auto": true, "idle_brightness": 30,
- *                  "ambient_timeout": 240, "theme": "dark", "accent": 0 },
+ *     "display": { "brightness_auto": true, "brightness": 70, "always_on": true,
+ *                  "idle_brightness_auto": true, "idle_brightness": 15,
+ *                  "ambient_timeout": 240, "theme": "auto", "accent": 0,
+ *                  "face_wake": false, "face_wake_fps": 5, "face_wake_frames": 4 },
  *     "time":    { "auto": true, "server": "pool.ntp.org",
  *                  "timezone_auto": true, "timezone": "Europe/Athens",
  *                  "timezone_posix": "EET-2EEST,M3.5.0/3,M10.5.0/4",
  *                  "clock_24h": true, "show_seconds": true, "date_format": "dmy" },
  *     "general": { "language": "en", "fahrenheit": false, "keyboards": ["en", "el"] },
- *     "location": { "auto": true, "name": "Athens", "latitude": 37.98, "longitude": 23.73 },
+ *     "location": { "auto": true, "name": "Athens", "latitude": 37.98, "longitude": 23.73,
+ *                   "places": [ { "name": "Paris", "latitude": 48.85, "longitude": 2.35 } ] },
  *     "alarms":  { "snooze_minutes": 9, "volume": 80, "ramp_seconds": 30 },
  *     "sensors": { "publish_interval": 60, "temperature_offset": -1.5,
  *                  "topic": "smartclock/sensors", "discovery": true }
@@ -61,11 +63,24 @@ extern "C" {
 #define SETTINGS_ZONE_LEN      48   /**< Time zone name, and its POSIX string */
 #define SETTINGS_LOCATION_LEN  48   /**< Place name shown on the forecasts */
 
+/** Cities besides the clock's own that the weather page can be switched to. */
+#define SETTINGS_PLACES_MAX    6
+
 /** Accent colours the UI offers; ui_theme.c names them, in this many. */
 #define SETTINGS_ACCENT_COUNT  8
 
 /** Lowest brightness or sensitivity, so the screen can never be turned black by accident. */
 #define SETTINGS_BRIGHTNESS_MIN 5
+
+/** Highest always-on brightness: the ambient face is for a dark room. */
+#define SETTINGS_IDLE_BRIGHTNESS_MAX 20
+
+/** Face wake: the frames looked at a second on offer, and how many in a row
+ *  must hold a face to wake the screen. */
+#define SETTINGS_FACE_WAKE_FPS_LOW    5
+#define SETTINGS_FACE_WAKE_FPS_HIGH   10
+#define SETTINGS_FACE_WAKE_FRAMES_MIN 3
+#define SETTINGS_FACE_WAKE_FRAMES_MAX 7
 
 /**********************
  *      TYPEDEFS
@@ -74,6 +89,7 @@ extern "C" {
 typedef enum {
     SETTINGS_THEME_DARK,
     SETTINGS_THEME_LIGHT,
+    SETTINGS_THEME_AUTO,   /**< Light from sunrise to sunset, dark the rest of the day */
 } settings_theme_t;
 
 /** Order of day, month and year in dates. */
@@ -97,6 +113,13 @@ typedef enum {
     SETTINGS_KEYBOARD_COUNT,
 } settings_keyboard_t;
 
+/** A city the forecasts can be for. */
+typedef struct {
+    char   name[SETTINGS_LOCATION_LEN];
+    double latitude;    /**< Degrees north */
+    double longitude;   /**< Degrees east */
+} settings_place_t;
+
 typedef struct {
     /*Wi-Fi*/
     char wifi_ssid[SETTINGS_SSID_LEN];
@@ -115,11 +138,15 @@ typedef struct {
      *with it. With automatic on, the level is the light sensor's sensitivity.*/
     bool             brightness_auto;
     uint8_t          brightness;             /**< Percent: the level, or the sensitivity when automatic */
+    bool             always_on;              /**< Idle shows the ambient clock; off, idle turns the screen off */
     bool             idle_brightness_auto;
-    uint8_t          idle_brightness;        /**< The same, for the ambient clock face */
-    uint16_t         ambient_timeout;        /**< Seconds of no touch before the ambient clock; 0 = never */
+    uint8_t          idle_brightness;        /**< The same, for the ambient clock; at most SETTINGS_IDLE_BRIGHTNESS_MAX */
+    uint16_t         ambient_timeout;        /**< Seconds of no touch before idle; 0 = never */
     settings_theme_t theme;
     uint8_t          accent;                 /**< Index, below SETTINGS_ACCENT_COUNT */
+    bool             face_wake;              /**< While idle the camera looks for a face, and one wakes the screen */
+    uint8_t          face_wake_fps;          /**< Frames looked at a second: SETTINGS_FACE_WAKE_FPS_LOW or _HIGH */
+    uint8_t          face_wake_frames;       /**< Frames in a row with a face that wake it */
 
     /*Time*/
     bool                   time_auto;                           /**< From the time server; otherwise set by hand */
@@ -142,6 +169,11 @@ typedef struct {
     char   location_name[SETTINGS_LOCATION_LEN];
     double latitude;    /**< Degrees north */
     double longitude;   /**< Degrees east */
+
+    /*More cities the weather page can be switched to, in the order added. The
+     *clock page, and everything else, keeps to the location above.*/
+    settings_place_t places[SETTINGS_PLACES_MAX];
+    uint8_t          place_count;
 
     /*Alarms*/
     uint8_t  alarm_snooze_minutes;   /**< 1..30 */

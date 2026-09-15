@@ -20,6 +20,10 @@
 
 #define FORECAST_API "https://api.open-meteo.com/v1/forecast"
 #define AIR_API      "https://air-quality-api.open-meteo.com/v1/air-quality"
+#define SEARCH_API   "https://geocoding-api.open-meteo.com/v1/search"
+
+/** Longest name searched for, before encoding. */
+#define SEARCH_NAME_MAX 96
 
 /** The mean length of a lunation, in seconds. */
 #define SYNODIC_SECONDS (29.530588861 * 86400.0)
@@ -35,6 +39,8 @@ static float         number(const cJSON * item);
 static uint32_t      numbers(const cJSON * array, float out[], uint32_t max);
 static uint32_t      instants(const cJSON * array, time_t out[], uint32_t max);
 static int           code_of(float value);
+static bool          url_encode(const char * text, char * out, size_t size);
+static void          text_copy(char * dst, size_t size, const char * src);
 
 /**********************
  *   GLOBAL FUNCTIONS
@@ -231,6 +237,62 @@ bool open_meteo_parse_place(const char * json, size_t len, open_meteo_place_t * 
     return found;
 }
 
+bool open_meteo_search_url(const char * name, char * buf, size_t size)
+{
+    char encoded[SEARCH_NAME_MAX * 3 + 1];
+
+    if(strlen(name) > SEARCH_NAME_MAX || !url_encode(name, encoded, sizeof(encoded))) return false;
+
+    int n = snprintf(buf, size, SEARCH_API "?name=%s&count=%d&language=en&format=json", encoded,
+                     OPEN_METEO_SEARCH_RESULTS);
+
+    return n > 0 && (size_t)n < size;
+}
+
+int32_t open_meteo_parse_search(const char * json, size_t len, open_meteo_place_t out[], uint32_t max)
+{
+    cJSON * root = cJSON_ParseWithLength(json, len);
+
+    /*No match leaves "results" out; a refused request says "error".*/
+    if(!cJSON_IsObject(root) || cJSON_IsTrue(member(root, "error"))) {
+        cJSON_Delete(root);
+        return -1;
+    }
+
+    const cJSON * results = member(root, "results");
+    const cJSON * item;
+    uint32_t      n = 0;
+
+    if(cJSON_IsArray(results)) {
+        cJSON_ArrayForEach(item, results) {
+            if(n == max) break;
+
+            const cJSON * name    = member(item, "name");
+            const cJSON * lat     = member(item, "latitude");
+            const cJSON * lon     = member(item, "longitude");
+            const cJSON * admin   = member(item, "admin1");
+            const cJSON * country = member(item, "country");
+            if(!cJSON_IsString(name) || !cJSON_IsNumber(lat) || !cJSON_IsNumber(lon)) continue;
+
+            open_meteo_place_t * place = &out[n++];
+            memset(place, 0, sizeof(*place));
+            text_copy(place->name, sizeof(place->name), name->valuestring);
+            place->latitude  = lat->valuedouble;
+            place->longitude = lon->valuedouble;
+
+            /*"Region, Country", or whichever of the two there is.*/
+            char region[160];
+            snprintf(region, sizeof(region), "%s%s%s", cJSON_IsString(admin) ? admin->valuestring : "",
+                     cJSON_IsString(admin) && cJSON_IsString(country) ? ", " : "",
+                     cJSON_IsString(country) ? country->valuestring : "");
+            text_copy(place->region, sizeof(place->region), region);
+        }
+    }
+
+    cJSON_Delete(root);
+    return (int32_t)n;
+}
+
 const char * open_meteo_code_text(int code)
 {
     switch(code) {
@@ -362,4 +424,46 @@ static uint32_t instants(const cJSON * array, time_t out[], uint32_t max)
 static int code_of(float value)
 {
     return isnan(value) ? -1 : (int)value;
+}
+
+/** Percent-encode everything but the unreserved characters, UTF-8 byte by byte. */
+static bool url_encode(const char * text, char * out, size_t size)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    size_t            n     = 0;
+
+    for(const unsigned char * p = (const unsigned char *)text; *p; p++) {
+        bool plain = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') ||
+                     *p == '-' || *p == '_' || *p == '.' || *p == '~';
+
+        if(plain) {
+            if(n + 1 >= size) return false;
+            out[n++] = (char)*p;
+        }
+        else {
+            if(n + 3 >= size) return false;
+            out[n++] = '%';
+            out[n++] = hex[*p >> 4];
+            out[n++] = hex[*p & 0x0F];
+        }
+    }
+
+    out[n] = '\0';
+    return true;
+}
+
+/** Copy UTF-8 text, cut short if it must be before a character rather than inside one. */
+static void text_copy(char * dst, size_t size, const char * src)
+{
+    size_t len = strlen(src);
+
+    if(len >= size) {
+        len = size - 1;
+        /*src[len] is the first byte left out: if it continues a character,
+         *leave out the rest of that character too.*/
+        while(len > 0 && ((unsigned char)src[len] & 0xC0) == 0x80) len--;
+    }
+
+    memcpy(dst, src, len);
+    dst[len] = '\0';
 }

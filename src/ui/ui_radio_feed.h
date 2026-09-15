@@ -67,6 +67,13 @@ void ui_radio_feed_stop(void);
 /** @return   the radio's volume, percent: what the output returns to after an alarm */
 int32_t ui_radio_feed_get_volume(void);
 
+/**
+ * Set the radio's volume, as the page's slider does, and move the slider: for
+ * a station an alarm leaves playing at the level it rose to.
+ * @param volume   percent, 0..100
+ */
+void ui_radio_feed_set_volume(int32_t volume);
+
 #ifdef __cplusplus
 } /*extern "C"*/
 #endif
