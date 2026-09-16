@@ -752,7 +752,7 @@ static void page_publish(void)
         .high        = whole(f->days[0].high),
         .low         = whole(f->days[0].low),
         .humidity    = whole(f->now.humidity),
-        .rain_chance = whole(f->hours[current].rain_chance),
+        .dew_point   = whole(f->now.dew_point),
         .wind        = wind,
         .sunrise     = sunrise,
         .sunset      = sunset,

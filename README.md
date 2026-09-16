@@ -445,7 +445,7 @@ chip reads "Snoozed" with the time it rings again. The alarm settings live in
 - **Now** -- the refresh glyph and when the forecast was fetched in the top
   left corner, over a large drawn icon and the temperature, the condition with
   today's high and low, and the city; then, from the top on the right,
-  feels-like, humidity, chance of rain, wind, sunrise and sunset, the moon
+  feels-like, humidity, dew point, wind, sunrise and sunset, the moon
   drawn as it looks with how much of it is lit and whether that is growing,
   and the next new moon.
 - **Next 20 hours** -- `PAGE_WEATHER_HOURS` (10) slots, one every two hours,

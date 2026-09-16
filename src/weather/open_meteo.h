@@ -98,6 +98,7 @@ typedef struct {
     struct {
         float temperature;
         float feels_like;
+        float dew_point;        /**< The temperature the air would have to cool to for dew */
         float humidity;         /**< Percent */
         float wind_speed;
         float wind_direction;   /**< Degrees the wind comes from */

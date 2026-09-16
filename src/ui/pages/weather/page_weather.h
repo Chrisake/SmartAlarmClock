@@ -7,7 +7,7 @@
  * Layout:
  *
  *   +----------------------------------------------------------------+
- *   | (refresh) Updated 10:15       | FEELS LIKE HUMIDITY RAIN WIND   |
+ *   | (refresh) Updated 10:15       | FEELS LIKE HUMIDITY DEW PT WIND |
  *   | (icon) 24 deg Partly cloudy   |                                 |
  *   |               H 27  L 18      | SUNRISE    SUNSET   MOON NEW MOON|
  *   |               [Athens v]      |                                 |
@@ -87,7 +87,7 @@ typedef struct {
     int32_t      high;         /**< Today's forecast high */
     int32_t      low;          /**< Today's forecast low */
     int32_t      humidity;     /**< Percent */
-    int32_t      rain_chance;  /**< Percent */
+    int32_t      dew_point;    /**< Degrees, in the same unit as the temperatures */
     const char * wind;         /**< e.g. "14 km/h N" */
     const char * sunrise;      /**< e.g. "7:04 AM" */
     const char * sunset;       /**< e.g. "7:31 PM" */

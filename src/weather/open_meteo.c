@@ -50,8 +50,8 @@ bool open_meteo_forecast_url(double latitude, double longitude, bool fahrenheit,
 {
     int n = snprintf(buf, size,
                      FORECAST_API "?latitude=%.4f&longitude=%.4f"
-                     "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,"
-                     "wind_speed_10m,wind_direction_10m"
+                     "&current=temperature_2m,relative_humidity_2m,apparent_temperature,dew_point_2m,is_day,"
+                     "weather_code,wind_speed_10m,wind_direction_10m"
                      "&hourly=temperature_2m,precipitation_probability,weather_code,is_day"
                      "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,"
                      "precipitation_probability_max,moon_phase"
@@ -94,6 +94,7 @@ bool open_meteo_parse_forecast(const char * json, size_t len, open_meteo_forecas
 
     out->now.temperature    = number(member(current, "temperature_2m"));
     out->now.feels_like     = number(member(current, "apparent_temperature"));
+    out->now.dew_point      = number(member(current, "dew_point_2m"));
     out->now.humidity       = number(member(current, "relative_humidity_2m"));
     out->now.wind_speed     = number(member(current, "wind_speed_10m"));
     out->now.wind_direction = number(member(current, "wind_direction_10m"));

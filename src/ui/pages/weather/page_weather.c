@@ -59,7 +59,7 @@
 typedef enum {
     STAT_FEELS_LIKE,
     STAT_HUMIDITY,
-    STAT_RAIN,
+    STAT_DEW_POINT,
     STAT_WIND,
     STAT_SUNRISE,
     STAT_SUNSET,
@@ -112,7 +112,7 @@ static const ui_page_t desc = {
 static const char * const stat_captions[STAT_COUNT] = {
     [STAT_FEELS_LIKE] = "FEELS LIKE",
     [STAT_HUMIDITY]   = "HUMIDITY",
-    [STAT_RAIN]       = "RAIN",
+    [STAT_DEW_POINT]  = "DEW POINT",
     [STAT_WIND]       = "WIND",
     [STAT_SUNRISE]    = "SUNRISE",
     [STAT_SUNSET]     = "SUNSET",
@@ -200,7 +200,7 @@ void page_weather_set_now(const page_weather_now_t * now)
 
     temp_label_set(now_stats[STAT_FEELS_LIKE], now->feels_like);
     lv_label_set_text_fmt(now_stats[STAT_HUMIDITY], "%d %%", (int)now->humidity);
-    lv_label_set_text_fmt(now_stats[STAT_RAIN], "%d %%", (int)now->rain_chance);
+    temp_label_set(now_stats[STAT_DEW_POINT], now->dew_point);
     lv_label_set_text(now_stats[STAT_WIND], now->wind ? now->wind : "--");
     lv_label_set_text(now_stats[STAT_SUNRISE], now->sunrise ? now->sunrise : "--");
     lv_label_set_text(now_stats[STAT_SUNSET], now->sunset ? now->sunset : "--");
@@ -401,13 +401,13 @@ static void now_card_create(lv_obj_t * parent)
     lv_obj_set_overflow_visible(stats, true);
     lv_obj_set_grid_dsc_array(stats, stat_cols, stat_rows);
 
-    /*Feels like, humidity, rain and wind across the top; sunrise and sunset
+    /*Feels like, humidity, dew point and wind across the top; sunrise and sunset
      *under the first two.*/
     for(uint32_t i = 0; i < STAT_COUNT; i++) {
         stat_create(stats, i < 4 ? i : i - 4, i < 4 ? 0 : 1, stat_captions[i], &now_stats[i]);
     }
 
-    /*The moon under the rain: drawn as it looks, how much of it is lit, and an
+    /*The moon under the dew point: drawn as it looks, how much of it is lit, and an
      *arrow for whether that grows or shrinks in the days ahead. Then the next
      *new moon under the wind.*/
     lv_obj_t * moon = box_create(stats);
