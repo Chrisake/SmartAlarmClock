@@ -59,6 +59,11 @@
 /** Width of the gutter holding the Light/Heavy scale labels. */
 #define RAIN_AXIS_WIDTH 42
 
+/** The tab naming the city the forecast is for: how much of it the section's
+ *  right border leaves showing, and the longest name it stretches to. */
+#define PLACE_TAB_SHOWN    26
+#define PLACE_TAB_MAX_NAME 150
+
 /**********************
  *  STATIC PROTOTYPES
  **********************/
@@ -228,6 +233,7 @@ static lv_obj_t * weather_condition;
 static lv_obj_t * weather_real_feel;
 static lv_obj_t * weather_humidity;
 static lv_obj_t * weather_place;
+static lv_obj_t * weather_place_tab;
 static lv_obj_t * weather_status;
 
 static lv_obj_t *          rain_chart;
@@ -333,8 +339,17 @@ void page_clock_set_weather_now(ui_weather_t icon, const char * temp, const char
 
 void page_clock_set_weather_place(const char * name)
 {
-    lv_label_set_text(weather_place, name ? name : "");
-    lv_obj_set_hidden(weather_place, !name || !name[0]);
+    bool shown = name && name[0];
+
+    lv_obj_set_hidden(weather_place_tab, !shown);
+    if(!shown) return;
+
+    lv_label_set_text(weather_place, name);
+
+    /*The tab is as long as the name is wide: the turn is drawn, so the layout
+     *still has the label lying down.*/
+    lv_obj_update_layout(weather_place);
+    lv_obj_set_height(weather_place_tab, lv_obj_get_width(weather_place) + UI_GAP);
 }
 
 void page_clock_set_rain(const page_clock_rain_level_t levels[], uint32_t count,
@@ -785,14 +800,33 @@ static void weather_section_create(lv_obj_t * parent)
     lv_obj_set_clickable(section, true);
     lv_obj_add_event_cb(section, weather_section_clicked, LV_EVENT_CLICKED, NULL);
 
-    /*Where the forecast is for, small in the top right corner, out of the
-     *stack below.*/
-    weather_place = ui_label_create(section, "", UI_FONT_XS, UI_COLOR_TEXT_DIM);
-    lv_obj_set_floating(weather_place, true);
-    lv_obj_set_style_max_width(weather_place, LV_PCT(50), LV_PART_MAIN);
+    /*Where the forecast is for, on a tab at the section's right border, out of
+     *the stack below. Half the tab is past the border, so only its rounded
+     *left side shows, as if it were slid under the edge. It is drawn in the
+     *text colour with the name in the background's -- dark on light, light on
+     *dark -- so the corner reads as a marker rather than another reading.*/
+    weather_place_tab = lv_obj_create(section);
+    lv_obj_set_floating(weather_place_tab, true);
+    lv_obj_set_size(weather_place_tab, PLACE_TAB_SHOWN * 2, PLACE_TAB_SHOWN * 2);
+    lv_obj_set_style_bg_color(weather_place_tab, UI_COLOR_TEXT, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(weather_place_tab, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(weather_place_tab, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(weather_place_tab, UI_RADIUS - 4, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(weather_place_tab, 0, LV_PART_MAIN);
+    lv_obj_set_scrollable(weather_place_tab, false);
+    lv_obj_set_clickable(weather_place_tab, false);
+    lv_obj_align(weather_place_tab, LV_ALIGN_TOP_RIGHT, PLACE_TAB_SHOWN, 0);
+    lv_obj_set_hidden(weather_place_tab, true);
+
+    /*A quarter turn anticlockwise about its centre, so the name reads bottom
+     *to top, centred on the half of the tab that shows.*/
+    weather_place = ui_label_create(weather_place_tab, "", UI_FONT_XS, UI_COLOR_BG);
+    lv_obj_set_style_max_width(weather_place, PLACE_TAB_MAX_NAME, LV_PART_MAIN);
     ui_label_single_line(weather_place, UI_FONT_XS);
-    lv_obj_align(weather_place, LV_ALIGN_TOP_RIGHT, 0, 0);
-    lv_obj_set_hidden(weather_place, true);
+    lv_obj_set_style_transform_pivot_x(weather_place, LV_PCT(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_y(weather_place, LV_PCT(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_rotation(weather_place, 2700, LV_PART_MAIN);
+    lv_obj_align(weather_place, LV_ALIGN_CENTER, -PLACE_TAB_SHOWN / 2, 0);
 
     /*Conditions first: temperature with the icon, then RealFeel and humidity
      *as a pair of small readouts underneath.*/

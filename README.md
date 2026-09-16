@@ -514,7 +514,7 @@ again at once.
 A city picked on the weather page has a forecast of its own, fetched when it
 is picked and then on the same schedule, and dropped when another is picked or
 the city is removed. Everything else keeps to the clock's location: the clock
-page's weather section, which names the city small in its top right corner,
+page's weather section, which names the city on a tab at its right border,
 the automatic theme's sunrise and sunset, and the air quality. Times in another
 city's forecast are shown in the clock's own time zone.
 

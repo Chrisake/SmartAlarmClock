@@ -184,9 +184,9 @@ void page_clock_set_weather_now(ui_weather_t icon, const char * temp, const char
                                 const char * real_feel, const char * humidity);
 
 /**
- * Name the city the weather section's forecast is for, small in its top right
- * corner.
- * @param name   e.g. "Athens"; NULL or empty hides it
+ * Name the city the weather section's forecast is for, on a tab standing on
+ * the section's right border, the name turned a quarter turn.
+ * @param name   e.g. "Athens"; NULL or empty hides the tab
  */
 void page_clock_set_weather_place(const char * name);
 
