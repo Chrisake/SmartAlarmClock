@@ -416,6 +416,14 @@ static lv_obj_t * create(lv_obj_t * parent)
     lv_obj_set_scrollable(root, false);
     lv_obj_set_grid_dsc_array(root, cols, rows);
 
+    /*After ui_rebuild() these still point at the old page's objects, deleted.
+     *The tiles are built one at a time, and each new one looks over all of
+     *them -- plot_apply() and axes_update() -- so the ones not built yet must
+     *read as missing, not as freed memory. The feeds tell the new page its
+     *readings and history again.*/
+    lv_memzero(metrics, sizeof(metrics));
+    lv_memzero(axes, sizeof(axes));
+
     /*The chart first: the tiles add their series to it.*/
     chart_card_create(root);
     tiles_card_create(root);
