@@ -3,7 +3,7 @@
  *
  * The tabs, the on-screen keyboard, and the building blocks every tab is made
  * of. The tabs themselves are in settings_wifi.c, settings_mqtt.c,
- * settings_time.c, settings_weather.c and settings_device.c.
+ * settings_time.c, settings_weather.c, settings_device.c and settings_wake.c.
  */
 
 /*********************
@@ -60,6 +60,7 @@ static const char * const tab_names[PAGE_SETTINGS_TAB_COUNT] = {
     [PAGE_SETTINGS_TAB_TIME]    = "Date & time",
     [PAGE_SETTINGS_TAB_WEATHER] = "Weather",
     [PAGE_SETTINGS_TAB_DEVICE]  = "Device",
+    [PAGE_SETTINGS_TAB_WAKE]    = "Wake",
 };
 
 static bool       built;
@@ -106,6 +107,7 @@ void page_settings_set_values(const settings_t * settings)
     sp_time_values();
     sp_weather_values();
     sp_device_values();
+    sp_wake_values();
 }
 
 void page_settings_set_now(const struct tm * local)
@@ -142,6 +144,11 @@ void page_settings_set_found(page_settings_search_t search, page_settings_found_
 void page_settings_set_detected_place(const char * name)
 {
     sp_weather_detected(name);
+}
+
+void page_settings_set_radar(page_settings_radar_t state, bool dark)
+{
+    sp_wake_radar(state, dark);
 }
 
 void page_settings_set_search_cb(page_settings_search_cb_t cb)
@@ -503,6 +510,7 @@ static lv_obj_t * create(lv_obj_t * parent)
     sp_time_create(tabs[PAGE_SETTINGS_TAB_TIME]);
     sp_weather_create(tabs[PAGE_SETTINGS_TAB_WEATHER]);
     sp_device_create(tabs[PAGE_SETTINGS_TAB_DEVICE]);
+    sp_wake_create(tabs[PAGE_SETTINGS_TAB_WAKE]);
 
     built = true;
 

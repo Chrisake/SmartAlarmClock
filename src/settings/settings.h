@@ -17,7 +17,8 @@
  *     "display": { "brightness_auto": true, "brightness": 70, "always_on": true,
  *                  "idle_brightness_auto": true, "idle_brightness": 15,
  *                  "ambient_timeout": 240, "theme": "auto", "accent": 0,
- *                  "face_wake": false, "face_wake_fps": 5, "face_wake_frames": 4 },
+ *                  "face_wake": false, "face_wake_fps": 5, "face_wake_frames": 4,
+ *                  "radar_wake": true, "radar_sensitivity": 50, "radar_dark": "reduced" },
  *     "time":    { "auto": true, "server": "pool.ntp.org",
  *                  "timezone_auto": true, "timezone": "Europe/Athens",
  *                  "timezone_posix": "EET-2EEST,M3.5.0/3,M10.5.0/4",
@@ -82,6 +83,11 @@ extern "C" {
 #define SETTINGS_FACE_WAKE_FRAMES_MIN 3
 #define SETTINGS_FACE_WAKE_FRAMES_MAX 7
 
+/** Movement wake: how little movement it takes. Low wakes the clock for
+ *  someone walking up to it; high, for a turn of the head across the room. */
+#define SETTINGS_RADAR_SENSITIVITY_MIN 5
+#define SETTINGS_RADAR_SENSITIVITY_MAX 100
+
 /**********************
  *      TYPEDEFS
  **********************/
@@ -91,6 +97,15 @@ typedef enum {
     SETTINGS_THEME_LIGHT,
     SETTINGS_THEME_AUTO,   /**< Light from sunrise to sunset, dark the rest of the day */
 } settings_theme_t;
+
+/** What movement wake does once the room is dark, where someone asleep is
+ *  the likeliest thing to move in front of the clock. */
+typedef enum {
+    SETTINGS_RADAR_DARK_ON,        /**< Nothing changes */
+    SETTINGS_RADAR_DARK_REDUCED,   /**< Only nearer or stronger movement wakes it */
+    SETTINGS_RADAR_DARK_OFF,       /**< Nothing wakes it while the room is dark */
+    SETTINGS_RADAR_DARK_COUNT,
+} settings_radar_dark_t;
 
 /** Order of day, month and year in dates. */
 typedef enum {
@@ -147,6 +162,9 @@ typedef struct {
     bool             face_wake;              /**< While idle the camera looks for a face, and one wakes the screen */
     uint8_t          face_wake_fps;          /**< Frames looked at a second: SETTINGS_FACE_WAKE_FPS_LOW or _HIGH */
     uint8_t          face_wake_frames;       /**< Frames in a row with a face that wake it */
+    bool                  radar_wake;         /**< While idle the radar watches the room, and movement wakes the screen */
+    uint8_t               radar_sensitivity;  /**< Percent, SETTINGS_RADAR_SENSITIVITY_MIN..MAX */
+    settings_radar_dark_t radar_dark;         /**< What movement wake does in a dark room */
 
     /*Time*/
     bool                   time_auto;                           /**< From the time server; otherwise set by hand */

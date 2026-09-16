@@ -2,6 +2,7 @@
 
 #include "board/board.h"
 #include "presence/face_detector.h"
+#include "presence/radar_sensor.h"
 
 #include <SDL.h>
 
@@ -18,6 +19,53 @@ static void face_key_poll(lv_timer_t * timer)
   if(pressed == held) return;
   held = pressed;
   face_detector_sim_set_present(pressed);
+}
+
+/*The simulator has no presence board either. Keys stand in for someone in
+ *front of the radar: R walks towards the clock, S stands still near it, A
+ *moves about without coming closer. X unplugs the board, to try what the clock
+ *does without one, and D turns the room's light out.*/
+static void radar_key_poll(lv_timer_t * timer)
+{
+  /*A walk of about a metre a second, from across the room to arm's length.*/
+  static const float FAR_CM  = 400.0f;
+  static const float NEAR_CM = 60.0f;
+  static const float STEP_CM = 10.0f;
+
+  static bool  unplug_held;
+  static bool  dark_held;
+  static bool  dark;
+  static float distance = 400.0f;
+
+  const Uint8 * keys = SDL_GetKeyboardState(NULL);
+  LV_UNUSED(timer);
+
+  if(!keys) return;
+
+  bool unplug = keys[SDL_SCANCODE_X];
+  if(unplug && !unplug_held) radar_sensor_sim_set_connected(!radar_sensor_sim_is_connected());
+  unplug_held = unplug;
+
+  bool darken = keys[SDL_SCANCODE_D];
+  if(darken && !dark_held) {
+    dark = !dark;
+    radar_sensor_sim_set_lux(dark ? 0.2f : 120.0f);
+  }
+  dark_held = darken;
+
+  if(keys[SDL_SCANCODE_R]) {
+    distance -= STEP_CM;
+    if(distance < NEAR_CM) distance = NEAR_CM;
+    radar_sensor_sim_set_target(true, distance, 60.0f);
+    return;
+  }
+
+  /*Let go of R and the walk starts over from across the room.*/
+  distance = FAR_CM;
+
+  if(keys[SDL_SCANCODE_S])      radar_sensor_sim_set_target(true, 150.0f, 2.0f);
+  else if(keys[SDL_SCANCODE_A]) radar_sensor_sim_set_target(true, 150.0f, 60.0f);
+  else                          radar_sensor_sim_set_target(false, FAR_CM, 0.0f);
 }
 
 lv_display_t * sdl_hal_init(int32_t w, int32_t h)
@@ -68,6 +116,8 @@ lv_display_t * sdl_hal_init(int32_t w, int32_t h)
   lv_indev_set_group(kb, lv_group_get_default());
 
   lv_timer_create(face_key_poll, 50, NULL);
+  /*The radar's own frames come ten times a second; so does the key that feeds them.*/
+  lv_timer_create(radar_key_poll, 100, NULL);
 
   return disp;
 }

@@ -76,6 +76,7 @@ typedef enum {
     PAGE_SETTINGS_TAB_TIME,
     PAGE_SETTINGS_TAB_WEATHER,
     PAGE_SETTINGS_TAB_DEVICE,
+    PAGE_SETTINGS_TAB_WAKE,
     PAGE_SETTINGS_TAB_COUNT,
 } page_settings_tab_t;
 
@@ -108,6 +109,13 @@ typedef enum {
     PAGE_SETTINGS_LINK_CONNECTED,
     PAGE_SETTINGS_LINK_FAILED,
 } page_settings_link_t;
+
+/** Whether the movement sensor is there and answering. */
+typedef enum {
+    PAGE_SETTINGS_RADAR_UNKNOWN,   /**< Not looked at yet, or movement wake is off */
+    PAGE_SETTINGS_RADAR_READY,
+    PAGE_SETTINGS_RADAR_MISSING,
+} page_settings_radar_t;
 
 /** One network from a scan. */
 typedef struct {
@@ -200,6 +208,14 @@ void page_settings_set_found(page_settings_search_t search, page_settings_found_
  * @param name   where the automatic location found the clock, e.g. "Athens"; NULL while unknown
  */
 void page_settings_set_detected_place(const char * name);
+
+/**
+ * Say how movement wake is doing, under its rows on the Device tab.
+ * @param state   whether the sensor is there and answering
+ * @param dark    the light sensor says the room is dark, so the setting for a
+ *                dark room is the one in force
+ */
+void page_settings_set_radar(page_settings_radar_t state, bool dark);
 
 /** @param cb   called when a city is searched for; NULL to clear */
 void page_settings_set_search_cb(page_settings_search_cb_t cb);

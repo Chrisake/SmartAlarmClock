@@ -1,14 +1,12 @@
 /**
  * @file settings_device.c
  *
- * Device tab, in three cards. Display: the backlight awake, whether idle is
- * the always-on ambient clock or the screen off, the always-on backlight,
- * then theme -- dark, light, or by sunrise and sunset -- accent colour and how
- * soon the clock goes idle. General: language, temperature unit, and the
- * languages the keyboard offers. Beneath it, face wake: whether the camera
- * wakes the screen for a face, how many frames a second it looks at, and how
- * many in a row must hold one. Every control takes effect as soon as it is
- * changed.
+ * Device tab, in two cards. Display: the backlight awake, whether idle is the
+ * always-on ambient clock or the screen off, the always-on backlight, then
+ * theme -- dark, light, or by sunrise and sunset -- and accent colour.
+ * General: language, temperature unit, and the languages the keyboard offers.
+ * When the clock goes idle, and what wakes it, are the Wake tab's. Every
+ * control takes effect as soon as it is changed.
  *
  * Brightness is the backlight's alone -- nothing on screen is drawn any
  * differently at any level. Each brightness has an automatic switch; while it
@@ -60,16 +58,12 @@ static void brightness_create(brightness_t * b, lv_obj_t * parent, const char * 
 static void brightness_show(brightness_t * b, bool automatic, uint8_t level);
 
 static void always_on_changed(lv_event_t * e);
-static void face_wake_changed(lv_event_t * e);
-static void face_fps_clicked(lv_event_t * e);
-static void face_frames_changed(lv_event_t * e);
 
 static void auto_changed(lv_event_t * e);
 static void level_moved(lv_event_t * e);
 static void level_released(lv_event_t * e);
 static void theme_clicked(lv_event_t * e);
 static void accent_clicked(lv_event_t * e);
-static void timeout_changed(lv_event_t * e);
 static void language_changed(lv_event_t * e);
 static void unit_clicked(lv_event_t * e);
 static void keyboards_show(void);
@@ -82,15 +76,9 @@ static void keyboard_toggled(lv_event_t * e);
  *  STATIC VARIABLES
  **********************/
 
-/** Ambient clock timeouts on offer, in seconds; 0 is never. */
-static const uint16_t timeouts[] = {30, 60, 120, 240, 600, 0};
-static const char     timeout_options[] = "30 seconds\n1 minute\n2 minutes\n4 minutes\n10 minutes\nNever";
-
 /*In settings_theme_t order.*/
 static const char * const theme_options[] = {"Dark", "Light", "Auto"};
 static const char * const unit_options[]  = {UI_DEG "C", UI_DEG "F"};
-static const char * const fps_options[]   = {"5", "10"};
-static const char         frames_options[] = "3\n4\n5\n6\n7";
 
 /** [0] awake, [1] idle -- the index is the event user data. */
 static brightness_t brightness[2];
@@ -98,13 +86,6 @@ static brightness_t brightness[2];
 static lv_obj_t * always_on_switch;
 static lv_obj_t * theme_segmented;
 static lv_obj_t * swatches[SETTINGS_ACCENT_COUNT];
-static lv_obj_t * timeout_row;
-static lv_obj_t * timeout_dropdown;
-static lv_obj_t * face_switch;
-static lv_obj_t * face_fps_row;
-static lv_obj_t * face_fps_segmented;
-static lv_obj_t * face_frames_row;
-static lv_obj_t * face_frames_dropdown;
 static lv_obj_t * language_dropdown;
 static lv_obj_t * unit_segmented;
 static lv_obj_t * keyboards_button;
@@ -204,27 +185,6 @@ void sp_device_create(lv_obj_t * tab)
 
     ui_label_create(keyboards_button, "", UI_FONT_SM, UI_COLOR_TEXT);
     ui_label_create(keyboards_button, LV_SYMBOL_DOWN, UI_FONT_SM, UI_COLOR_TEXT);
-
-    /*Going idle, and waking: after how long, and face wake -- the camera looks
-     *for a face while the screen is idle. Face wake's two settings go while it
-     *is off. Here rather than under the display rows, which would then be too
-     *tall for the tab and scroll.*/
-    lv_obj_t * wake = sp_card_create(side);
-    lv_obj_set_style_pad_row(wake, UI_GAP / 2, LV_PART_MAIN);
-
-    timeout_row      = sp_row_create(wake, "Ambient clock after");
-    timeout_dropdown = sp_dropdown_create(timeout_row, timeout_options, timeout_changed);
-    lv_obj_set_width(timeout_dropdown, 150);
-
-    row         = sp_row_create(wake, "Wake on face");
-    face_switch = sp_switch_create(row, face_wake_changed);
-
-    face_fps_row       = sp_row_create(wake, "Frames a second");
-    face_fps_segmented = sp_segmented_create(face_fps_row, fps_options, 2, face_fps_clicked);
-
-    face_frames_row      = sp_row_create(wake, "Frames in a row");
-    face_frames_dropdown = sp_dropdown_create(face_frames_row, frames_options, face_frames_changed);
-    lv_obj_set_width(face_frames_dropdown, 90);
 }
 
 void sp_device_close(void)
@@ -246,31 +206,12 @@ void sp_device_values(void)
     sp_switch_set(always_on_switch, sp_values.always_on);
     lv_obj_set_hidden(brightness[1].auto_row, !sp_values.always_on);
     lv_obj_set_hidden(brightness[1].row, !sp_values.always_on);
-    sp_row_rename(timeout_row, sp_values.always_on ? "Ambient clock after" : "Screen off after");
 
     sp_segmented_select(theme_segmented, (uint32_t)sp_values.theme);
-
-    sp_switch_set(face_switch, sp_values.face_wake);
-    sp_segmented_select(face_fps_segmented, sp_values.face_wake_fps >= SETTINGS_FACE_WAKE_FPS_HIGH ? 1 : 0);
-    lv_dropdown_set_selected(face_frames_dropdown,
-                             (uint32_t)LV_CLAMP(SETTINGS_FACE_WAKE_FRAMES_MIN, sp_values.face_wake_frames,
-                                                SETTINGS_FACE_WAKE_FRAMES_MAX) - SETTINGS_FACE_WAKE_FRAMES_MIN);
-    lv_obj_set_hidden(face_fps_row, !sp_values.face_wake);
-    lv_obj_set_hidden(face_frames_row, !sp_values.face_wake);
 
     for(uint32_t i = 0; i < SETTINGS_ACCENT_COUNT; i++) {
         lv_obj_set_style_outline_width(swatches[i], i == sp_values.accent ? 2 : 0, LV_PART_MAIN);
     }
-
-    /*An unlisted timeout, from a hand-edited file, shows as the nearest longer one.*/
-    uint32_t selected = sizeof(timeouts) / sizeof(timeouts[0]) - 1;
-    for(uint32_t i = 0; i + 1 < sizeof(timeouts) / sizeof(timeouts[0]); i++) {
-        if(sp_values.ambient_timeout != 0 && sp_values.ambient_timeout <= timeouts[i]) {
-            selected = i;
-            break;
-        }
-    }
-    lv_dropdown_set_selected(timeout_dropdown, selected);
 
     lv_dropdown_set_selected(language_dropdown, 0);
     sp_segmented_select(unit_segmented, sp_values.fahrenheit ? 1 : 0);
@@ -369,32 +310,10 @@ static void theme_clicked(lv_event_t * e)
 static void always_on_changed(lv_event_t * e)
 {
     sp_values.always_on = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
-    /*The always-on backlight rows come or go, and the timeout's name follows.*/
+    /*The always-on backlight rows come or go, and the Wake tab's timeout is
+     *either the ambient clock's or the screen turning off.*/
     sp_device_values();
-    sp_changed();
-}
-
-static void face_wake_changed(lv_event_t * e)
-{
-    sp_values.face_wake = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
-    sp_device_values();
-    sp_changed();
-}
-
-static void face_fps_clicked(lv_event_t * e)
-{
-    bool high = (lv_uintptr_t)lv_event_get_user_data(e) == 1;
-
-    sp_values.face_wake_fps = high ? SETTINGS_FACE_WAKE_FPS_HIGH : SETTINGS_FACE_WAKE_FPS_LOW;
-    sp_segmented_select(face_fps_segmented, high ? 1 : 0);
-    sp_changed();
-}
-
-static void face_frames_changed(lv_event_t * e)
-{
-    uint32_t selected = lv_dropdown_get_selected(lv_event_get_target_obj(e));
-
-    sp_values.face_wake_frames = (uint8_t)LV_MIN(SETTINGS_FACE_WAKE_FRAMES_MIN + selected, SETTINGS_FACE_WAKE_FRAMES_MAX);
+    sp_wake_values();
     sp_changed();
 }
 
@@ -404,15 +323,6 @@ static void accent_clicked(lv_event_t * e)
     if(accent == sp_values.accent) return;
 
     sp_values.accent = accent;
-    sp_changed();
-}
-
-static void timeout_changed(lv_event_t * e)
-{
-    uint32_t i = lv_dropdown_get_selected(lv_event_get_target_obj(e));
-    if(i >= sizeof(timeouts) / sizeof(timeouts[0])) return;
-
-    sp_values.ambient_timeout = timeouts[i];
     sp_changed();
 }
 

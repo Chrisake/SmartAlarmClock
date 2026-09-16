@@ -138,6 +138,12 @@ void sp_weather_detected(const char * name);
 /*settings_device.c*/
 void sp_device_create(lv_obj_t * tab);
 void sp_device_values(void);
+
+/*settings_wake.c*/
+void sp_wake_create(lv_obj_t * tab);
+void sp_wake_values(void);
+/** Kept whether or not the tab is built. */
+void sp_wake_radar(page_settings_radar_t state, bool dark);
 /** Close the keyboard languages panel, if it is open. */
 void sp_device_close(void);
 

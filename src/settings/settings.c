@@ -54,6 +54,9 @@ void settings_defaults(settings_t * s)
     s->face_wake            = false;
     s->face_wake_fps        = SETTINGS_FACE_WAKE_FPS_LOW;
     s->face_wake_frames     = 4;
+    s->radar_wake           = true;
+    s->radar_sensitivity    = 50;
+    s->radar_dark           = SETTINGS_RADAR_DARK_REDUCED;
 
     s->time_auto     = true;
     strcpy(s->time_server, "pool.ntp.org");
@@ -124,6 +127,19 @@ bool settings_from_json(const char * json, size_t len, settings_t * out)
     }
     if(read_int(display, "face_wake_frames", SETTINGS_FACE_WAKE_FRAMES_MIN, SETTINGS_FACE_WAKE_FRAMES_MAX, &value)) {
         out->face_wake_frames = (uint8_t)value;
+    }
+
+    read_bool(display, "radar_wake", &out->radar_wake);
+    if(read_int(display, "radar_sensitivity", SETTINGS_RADAR_SENSITIVITY_MIN, SETTINGS_RADAR_SENSITIVITY_MAX,
+                &value)) {
+        out->radar_sensitivity = (uint8_t)value;
+    }
+
+    const cJSON * radar_dark = display ? cJSON_GetObjectItemCaseSensitive(display, "radar_dark") : NULL;
+    if(cJSON_IsString(radar_dark)) {
+        if(strcmp(radar_dark->valuestring, "on") == 0)       out->radar_dark = SETTINGS_RADAR_DARK_ON;
+        else if(strcmp(radar_dark->valuestring, "off") == 0) out->radar_dark = SETTINGS_RADAR_DARK_OFF;
+        else                                                 out->radar_dark = SETTINGS_RADAR_DARK_REDUCED;
     }
 
     const cJSON * theme = display ? cJSON_GetObjectItemCaseSensitive(display, "theme") : NULL;
@@ -241,6 +257,10 @@ char * settings_to_json(const settings_t * s)
     cJSON_AddBoolToObject(display, "face_wake", s->face_wake);
     cJSON_AddNumberToObject(display, "face_wake_fps", s->face_wake_fps);
     cJSON_AddNumberToObject(display, "face_wake_frames", s->face_wake_frames);
+    cJSON_AddBoolToObject(display, "radar_wake", s->radar_wake);
+    cJSON_AddNumberToObject(display, "radar_sensitivity", s->radar_sensitivity);
+    cJSON_AddStringToObject(display, "radar_dark", s->radar_dark == SETTINGS_RADAR_DARK_ON ? "on"
+                                                   : s->radar_dark == SETTINGS_RADAR_DARK_OFF ? "off" : "reduced");
 
     cJSON * time = cJSON_AddObjectToObject(root, "time");
     cJSON_AddBoolToObject(time, "auto", s->time_auto);

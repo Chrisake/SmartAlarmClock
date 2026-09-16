@@ -200,10 +200,14 @@ src/ui/
                               and the air quality forecast
   ui_air_feed.h / .c          sensors and outdoor air -> air quality page and
                               clock page; readings to MQTT
-  ui_presence_feed.h / .c     face wake while idle -> wakes the screen
+  ui_presence_feed.h / .c     face wake while idle, and movement wake always
+                              -> wakes the screen
 src/presence/                 face_wake: the camera thread counting frames with
                               a face; face_detector: esp_video + ESP-DL YOLO on
-                              the board, the F key in the simulator
+                              the board, the F key in the simulator;
+                              radar_wake: the thread deciding what movement is
+                              worth waking for; radar_sensor: the LD2410 and
+                              the light sensor beside it, keys in the simulator
 src/devices/                  device model, JSON configuration, MQTT state hub
                               (plain C, no LVGL)
 src/settings/                 device settings model, JSON load/save, and
@@ -990,7 +994,7 @@ which is why the curtain is drawn.
 
 ### Settings
 
-The Settings page, last in the rail, has five tabs:
+The Settings page, last in the rail, has six tabs:
 
 - **Wi-Fi**: the connection status, the network name and password with
   Connect, and beside them the networks a scan found. Tapping a network fills
@@ -1009,17 +1013,20 @@ The Settings page, last in the rail, has five tabs:
   when Enter is pressed, and the cities found are listed under the field with
   their region and country; a tap takes one.
 - **Device**: brightness, automatic or a level; always-on display, and its
-  brightness, automatic or a level up to 20 %; dark, light or automatic theme,
-  accent colour, and how soon the clock goes idle; then language (English only
-  so far), °C or °F, and the languages the keyboard offers; and face wake,
-  with 5 or 10 frames a second and 3 to 7 frames in a row.
+  brightness, automatic or a level up to 20 %; dark, light or automatic theme
+  and accent colour; then language (English only so far), °C or °F, and the
+  languages the keyboard offers.
+- **Wake**: how soon the clock goes idle; face wake, with 5 or 10 frames a
+  second and 3 to 7 frames in a row; and movement wake, with its sensitivity,
+  what it does in a dark room (On, Reduced or Off) and whether the radar is
+  there and answering.
 
 Brightness belongs to the backlight alone. Nothing on screen is drawn
 differently at any level. When a brightness is automatic, its slider sets how
 strongly the light sensor moves the backlight instead of a level, and the
 slider's name changes to say so.
 
-#### Idle: always-on display, screen off and face wake
+#### Idle: always-on display, screen off, face wake and movement wake
 
 Untouched for the idle time, the clock goes to its ambient face. With
 **always-on display** on, that is what stays up, at the always-on brightness,
@@ -1028,7 +1035,7 @@ brighter setting comes down to it when it loads. Off, the screen goes off
 instead: `ui.c` covers everything with black on the system layer and the
 backlight is turned off. The ambient face stays underneath, so switching
 always-on back on brings it straight back. A touch on the dark screen, an
-alarm ringing, or a face wakes it with `ui_wake()`, which also brings the clock
+alarm ringing, a face or movement wakes it with `ui_wake()`, which also brings the clock
 out of its ambient face; the touch that wakes it does nothing else. Without
 always-on, the idle time row reads "Screen off after" and the always-on
 brightness rows go.
@@ -1048,6 +1055,61 @@ ESP-PPQ and flashed to a `face_model` partition -- with ESP-DL, keeping the
 best box over a score threshold. It has not been tried on the board; the file
 lists what to check first. The simulator has no camera: hold **F** in its
 window and `face_detector_sim.c` sees a face in every frame.
+
+**Movement wake** watches the room with a 24 GHz mmWave radar, which sees
+through the dark and does not need anyone to be looking at the clock.
+`presence/radar_wake.c` runs one thread that reads the module ten times a
+second through `radar_sensor.h` -- whether anyone is there, how far off they
+are and how strongly they are moving.
+
+What it wakes for is a change, not a person:
+
+- **someone arriving** -- the room has been empty for `GONE_MS` (3 s) and then
+  somebody is there, within the range the sensitivity allows;
+- **someone coming closer** -- the distance falling by more than the
+  sensitivity's stretch across the last two seconds;
+- **movement well above what has been going on** -- more on that below.
+
+The last is what keeps a sleeping or sitting person from holding the screen
+awake all evening. However much they move is learnt as the room's own level, a
+running average over some ten seconds, and only movement that far above the
+level counts. Someone asleep in front of the clock soon reads as furniture;
+when they get up, the movement stands out from that level at once. The
+learning stops while something stands out, so a real event is never quietly
+learnt away, and it follows a quietening room faster than a stirring one, so
+that someone settling down is forgotten before they move again. After a wake,
+`REARM_MS` (4 s) pass before anything wakes the screen again.
+
+**Sensitivity** (5 to 100) sets all three at once: how far above the level
+movement must be, how much nearer someone must get, how far across the room it
+still counts (1.2 m to 5 m), and how many frames in a row it takes.
+
+**In the dark** -- the light sensor beside the radar says, below 1 lx -- the
+wake is left alone (**On**), halved in sensitivity (**Reduced**, the default),
+or stopped altogether (**Off**), since the one thing moving in a dark bedroom
+is usually asleep. The radar keeps reading either way, so the room's level and
+who is in it are right for the moment the light comes back on.
+
+Unlike face wake, movement wake runs whether the screen is idle or not: whoever
+is already in the room is then part of what the radar takes for granted by the
+time the screen goes idle, rather than looking like a new arrival. A wake it
+raises while the screen is in use is dropped.
+
+The clock **knows whether the sensor is there**: the module has to answer when
+it is opened, and twenty failed frames in a row (2 s) mean it has stopped
+answering. Either way the Wake tab says "No movement sensor found" and a notice
+appears once, and the thread tries again every ten seconds. Boards without the
+light sensor simply count as lit, so the wake behaves as if the setting were
+left alone.
+
+On the clock, `radar_sensor_esp.c` reads an HLK-LD2410 over a UART at 256000
+baud, in the reporting mode the module powers up in -- nothing is ever
+configured over the UART, so a module someone has already tuned keeps its
+tuning -- and a BH1750 over the board's I2C bus for the light. It has not been
+tried on the board; the file lists what to check first. The simulator has no
+presence board: **R** walks someone towards the clock, **S** stands them still
+near it, **A** has them move about where they are, **X** unplugs the board and
+**D** turns the room's light out.
 
 Device settings take effect as they change. Wi-Fi and MQTT credentials are only
 used when their button is pressed, so a half-typed password never drops a
@@ -1103,6 +1165,7 @@ still loads. `ui_settings_feed.c` loads and stores them and applies each one:
 | Brightness, always-on brightness | the backlight, off while the screen is; a logged hook in the simulator |
 | Idle after, always-on display | `ui_set_idle_timeout()`, `ui_set_always_on()` |
 | Face wake | `ui_presence_feed`, while idle |
+| Movement wake, sensitivity, in the dark | `ui_presence_feed` -> `radar_wake`, idle or not |
 | Location, more cities | `ui_weather_feed`: the forecasts fetched again for a new location; the weather page's list of cities |
 | Temperature unit, language | stored for the weather service and translations to use |
 | Keyboard languages | `ui_keyboard_set_languages()` |
